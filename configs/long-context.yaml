@@ -1,0 +1,20 @@
+run_name: qwen35-08b-long-context
+seed: 42
+
+model:
+  id: Qwen/Qwen3.5-0.8B-Base
+  revision: null
+  resume_best_v0_adapter: true
+
+data:
+  subset: long-context
+  use_real_contiguous_documents: true
+
+training:
+  precision: bf16
+  max_total_tokens: 4096
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
+  gradient_checkpointing: true
+  learning_rate: 0.00005
+  truncate: false

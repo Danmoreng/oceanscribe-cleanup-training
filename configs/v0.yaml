@@ -1,0 +1,35 @@
+run_name: qwen35-08b-v0
+seed: 42
+
+model:
+  id: Qwen/Qwen3.5-0.8B-Base
+  revision: null
+
+format:
+  task_keyword: Cleanup
+  commands_mode: mixed
+  assistant_output_only: true
+
+data:
+  sotto_en: 6000
+  aawaaz_en: 2000
+  synthetic_en: 2000
+  synthetic_de: 10000
+  balance_by: tokens
+  preserve_minimum: 0.20
+  hard_negative_minimum: 0.10
+
+experiments:
+  lora_ranks: [16, 32, 64]
+  lora_alpha_multiplier: 2
+  lora_dropout: 0.05
+
+training:
+  precision: bf16
+  max_total_tokens: 2048
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
+  gradient_checkpointing: true
+  learning_rate: 0.0001
+  epochs: 2
+  truncate: false

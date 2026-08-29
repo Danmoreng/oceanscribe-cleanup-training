@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oceanscribe-cleanup"
+version = "0.1.0"
+description = "Local transcript-cleanup fine-tuning for OceanScribe"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "pydantic>=2.11,<3",
+  "pyyaml>=6,<7",
+  "rich>=14,<15",
+  "typer>=0.16,<1",
+]
+
+[dependency-groups]
+dev = []
+train = [
+  "accelerate>=1.10,<2",
+  "datasets>=4,<5",
+  "jiwer>=4,<5",
+  "peft>=0.17,<1",
+  "rapidfuzz>=3.14,<4",
+  "sacrebleu>=2.5,<3",
+  "safetensors>=0.6,<1",
+  "sentencepiece>=0.2,<1",
+  "torch>=2.10,<3",
+  "transformers>=5.2,<6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oceanscribe_cleanup"]

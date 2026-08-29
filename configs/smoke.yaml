@@ -1,0 +1,32 @@
+run_name: qwen35-08b-smoke-r16
+seed: 42
+
+model:
+  id: Qwen/Qwen3.5-0.8B-Base
+  revision: null  # Pin after the target-machine model smoke succeeds.
+
+format:
+  task_keyword: Cleanup
+  commands_mode: on
+  assistant_output_only: true
+
+data:
+  sotto_en: 100
+  aawaaz_en: 100
+  synthetic_en: 100
+  synthetic_de: 100
+
+lora:
+  rank: 16
+  alpha: 32
+  dropout: 0.05
+
+training:
+  precision: bf16
+  max_total_tokens: 2048
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
+  gradient_checkpointing: true
+  learning_rate: 0.0001
+  max_steps: 50
+  truncate: false
