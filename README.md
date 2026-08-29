@@ -75,3 +75,9 @@ untested Torch/CUDA combination on the laptop.
 The repository currently contains the agreed prompt formatter, initial configs,
 tests, and a concise implementation plan. Dataset ingestion, model loading, the
 collator, and training loop are the next milestone.
+
+## License
+
+The training code is licensed under the Apache License 2.0. Datasets, base
+models, trained weights, and other external artifacts retain their own licenses
+and must be documented separately.
