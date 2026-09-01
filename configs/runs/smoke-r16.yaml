@@ -6,13 +6,14 @@ commands_mode: enabled
 
 model:
   id: Qwen/Qwen3.5-0.8B-Base
-  revision: null  # Resolve and pin after the target-machine model preflight.
+  revision: dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68
 
 data:
-  sotto_en: 100
-  aawaaz_en: 100
-  synthetic_en: 100
-  synthetic_de: 100
+  subset: smoke-en-400
+  sotto_en: 200
+  aawaaz_en: 200
+  synthetic_en: 0
+  synthetic_de: 0
 
 lora:
   rank: 16
