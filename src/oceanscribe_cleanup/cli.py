@@ -125,5 +125,31 @@ def train(
     typer.echo(json.dumps(report, indent=2, sort_keys=True))
 
 
+@app.command("evaluate-adapter")
+def evaluate_adapter_command(
+    revision: Annotated[str, typer.Option("--revision")],
+    adapter: Annotated[Path, typer.Option("--adapter", exists=True, file_okay=False)],
+    dataset: Annotated[Path, typer.Option("--dataset", exists=True, dir_okay=False)],
+    output: Annotated[Path, typer.Option("--output")],
+    limit: Annotated[int, typer.Option("--limit", min=1)] = 40,
+    batch_size: Annotated[int, typer.Option("--batch-size", min=1)] = 4,
+    max_new_tokens: Annotated[int, typer.Option("--max-new-tokens", min=1)] = 256,
+) -> None:
+    """Greedily compare the pinned base model and one adapter on validation records."""
+    from .evaluation import evaluate_adapter
+
+    payload = evaluate_adapter(
+        model_repository="Qwen/Qwen3.5-0.8B-Base",
+        revision=revision,
+        adapter_path=adapter,
+        records_path=dataset,
+        output_path=output,
+        limit=limit,
+        batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
+    )
+    typer.echo(json.dumps(payload["scores"], indent=2, sort_keys=True))
+
+
 if __name__ == "__main__":
     app()
