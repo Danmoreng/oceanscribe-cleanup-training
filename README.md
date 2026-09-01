@@ -76,25 +76,23 @@ Python 3.11 and `uv` are the supported environment. Linux or WSL2 is preferred
 for training.
 
 ```bash
-uv sync --group dev
-uv run oceanscribe-cleanup validate-configs
-uv run ruff check .
-uv run pytest -m "not model_download"
+uv sync --locked --group dev
+uv run --locked oceanscribe-cleanup validate-configs
+uv run --locked ruff check .
+uv run --locked pytest tests -m "not model_download"
 uv build
 ```
 
-Before GPU work, verify and document the target CUDA/PyTorch wheel source. Per
-the repository reproducibility rule, `uv.lock` is intentionally not committed
-until the model-load and mini-training smoke succeeds on that target. Commit the
-resulting lock immediately afterward and switch CI and documented commands to
-`uv sync --locked` / `uv run --locked`.
+The dependency lock was generated after the target-machine model-load and
+mini-training smoke succeeded with PyTorch 2.13, CUDA 13, and an RTX 4070 Ti.
+Keep setup, CI, and run commands locked.
 
 Regular CI does not download models. Manual tokenizer preflight requires a
 pinned tag or commit and records the resolved repository SHA:
 
 ```bash
-uv sync --group train
-uv run oceanscribe-cleanup tokenizer-preflight \
+uv sync --locked --group train
+uv run --locked oceanscribe-cleanup tokenizer-preflight \
   --revision <pinned-tag-or-commit>
 ```
 
@@ -103,13 +101,48 @@ cannot use the text-only class does it try the multimodal class and classify
 vision, projector, embedding, LM-head, MTP, and language-backbone parameters:
 
 ```bash
-uv run oceanscribe-cleanup inspect-model \
+uv run --locked oceanscribe-cleanup inspect-model \
   --revision <pinned-tag-or-commit>
 ```
 
 The inspection prints the explicit language-backbone `Linear` allowlist for
 LoRA. Training integration must call the included trainable-parameter assertion
 after adapter injection.
+
+## External-data smoke training
+
+After downloading the pinned Sotto and Aawaaz snapshots into their ignored
+`data/raw/` directories, build the deterministic 400-record English subset:
+
+```bash
+uv run --locked oceanscribe-cleanup prepare-external-smoke \
+  --revision dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68 \
+  --per-source 200 \
+  --validation-per-source 20 \
+  --seed 42
+```
+
+Run the two-step integration smoke first, then the 50-step run:
+
+```bash
+uv run --locked oceanscribe-cleanup train \
+  --config configs/runs/smoke-r16-quick.yaml \
+  --dataset data/processed/smoke-en-400/records.jsonl \
+  --output-dir runs/qwen35-08b-smoke-r16-quick
+
+uv run --locked oceanscribe-cleanup train \
+  --config configs/runs/smoke-r16.yaml \
+  --dataset data/processed/smoke-en-400/records.jsonl \
+  --output-dir runs/qwen35-08b-smoke-r16
+```
+
+Training loads only `Qwen3_5ForCausalLM`, rejects dataset/config/hash mismatch,
+tokenizes without chat templates or truncation, supervises completion plus EOS,
+injects LoRA only into the inspected language `Linear` allowlist, evaluates on
+the held-out validation split, saves local manifests, and verifies adapter
+reload. The RTX 4070 Ti smoke uses micro-batch 4 with four accumulation steps;
+the four longest records pass a backward/optimizer stress test below 10 GiB of
+PyTorch-allocated VRAM.
 
 ## Config and run reproducibility
 

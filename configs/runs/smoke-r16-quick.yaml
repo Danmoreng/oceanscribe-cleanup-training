@@ -1,6 +1,6 @@
 schema_version: 1
 config_type: run
-run_name: qwen35-08b-smoke-r16
+run_name: qwen35-08b-smoke-r16-quick
 prompt_contract_version: raw-v1
 commands_mode: enabled
 
@@ -28,8 +28,8 @@ training:
   warmup_ratio: 0.03
   weight_decay: 0.01
   max_grad_norm: 1.0
-  per_device_train_batch_size: 4
-  gradient_accumulation_steps: 4
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 2
   gradient_checkpointing: true
   use_cache: false
   max_sequence_length: 2048
@@ -37,10 +37,10 @@ training:
   truncation: false
   oversize_policy: reject
   eval_strategy: steps
-  eval_steps: 10
-  save_steps: 10
-  logging_steps: 5
-  save_total_limit: 3
+  eval_steps: 1
+  save_steps: 1
+  logging_steps: 1
+  save_total_limit: 1
   seed: 42
   data_seed: 42
-  max_steps: 50
+  max_steps: 2

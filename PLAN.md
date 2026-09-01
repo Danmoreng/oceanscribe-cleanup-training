@@ -26,6 +26,20 @@
 - Pinned-tokenizer and model-inspection commands; text-only model is tried first.
 - CPU tests, Hypothesis coverage, lint/build checks, and manual model preflight.
 
+## Completed target-machine smoke milestone
+
+- Pinned `Qwen/Qwen3.5-0.8B-Base` at
+  `dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68` and generated `uv.lock` only
+  after the model/training proof succeeded.
+- Verified PyTorch 2.13 CUDA 13 BF16 on an RTX 4070 Ti and loaded the text-only
+  `Qwen3_5ForCausalLM` path.
+- Built a deterministic 400-record English Sotto/Aawaaz subset with 360 train
+  and 40 validation records, pinned sources, deduplication, token limits, and a
+  local dataset manifest.
+- Completed the rank-16 50-step LoRA run, adapter save/reload, and validation
+  loss check. Micro-batch 4 with four accumulation steps delivered the best
+  safe throughput; batch 8 and batch 2 without checkpointing exceeded 12 GB.
+
 ## Remaining milestones
 
 ### 0. Target-machine and dependency proof

@@ -10,7 +10,7 @@ from oceanscribe_cleanup.config import CommandsMode, RunConfig, load_config, val
 
 def test_all_repository_configs_validate() -> None:
     paths = validate_config_tree("configs")
-    assert len(paths) == 6
+    assert len(paths) == 8
 
 
 def test_enabled_remains_an_enum_not_a_yaml_bool() -> None:
