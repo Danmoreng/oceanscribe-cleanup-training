@@ -134,6 +134,12 @@ uv run --locked oceanscribe-cleanup train \
   --config configs/runs/smoke-r16.yaml \
   --dataset data/processed/smoke-en-400/records.jsonl \
   --output-dir runs/qwen35-08b-smoke-r16
+
+uv run --locked oceanscribe-cleanup evaluate-adapter \
+  --revision dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68 \
+  --adapter runs/qwen35-08b-smoke-r16/adapter-final \
+  --dataset data/processed/smoke-en-400/records.jsonl \
+  --output runs/qwen35-08b-smoke-r16/qualitative-evaluation.json
 ```
 
 Training loads only `Qwen3_5ForCausalLM`, rejects dataset/config/hash mismatch,
