@@ -1,0 +1,29 @@
+name: Manual model preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Pinned Qwen tag or commit SHA
+        required: true
+
+jobs:
+  tokenizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: uv sync --group train
+      - name: Inspect tokenizer contract
+        run: >-
+          uv run oceanscribe-cleanup tokenizer-preflight
+          --revision "${{ inputs.revision }}"
+      - name: Run pinned tokenizer integration test
+        env:
+          OCEANSCRIBE_MODEL_REVISION: ${{ inputs.revision }}
+        run: uv run pytest -m model_download tests/test_model_integration.py

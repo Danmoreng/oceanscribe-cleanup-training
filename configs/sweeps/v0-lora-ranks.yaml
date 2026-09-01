@@ -1,0 +1,7 @@
+schema_version: 1
+config_type: sweep
+sweep_name: qwen35-08b-v0-lora-ranks
+base_config: configs/runs/v0-r16.yaml
+matrix:
+  lora.rank: [16, 32, 64]
+  lora.alpha: [32, 64, 128]

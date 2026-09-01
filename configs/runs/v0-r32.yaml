@@ -1,0 +1,44 @@
+schema_version: 1
+config_type: run
+run_name: qwen35-08b-v0-r32
+prompt_contract_version: raw-v1
+commands_mode: mixed
+model:
+  id: Qwen/Qwen3.5-0.8B-Base
+  revision: null
+data:
+  sotto_en: 6000
+  aawaaz_en: 2000
+  synthetic_en: 2000
+  synthetic_de: 10000
+  balance_by: tokens
+  preserve_minimum: 0.20
+  hard_negative_minimum: 0.10
+lora:
+  rank: 32
+  alpha: 64
+  dropout: 0.05
+training:
+  precision: bf16
+  optimizer: adamw_torch_fused
+  learning_rate: 0.0001
+  scheduler: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  gradient_checkpointing: true
+  use_cache: false
+  max_sequence_length: 2048
+  packing: false
+  truncation: false
+  oversize_policy: reject
+  eval_strategy: steps
+  eval_steps: 100
+  save_steps: 100
+  logging_steps: 10
+  save_total_limit: 3
+  seed: 42
+  data_seed: 42
+  epochs: 2

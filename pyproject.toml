@@ -16,8 +16,16 @@ dependencies = [
   "typer>=0.16,<1",
 ]
 
+[project.scripts]
+oceanscribe-cleanup = "oceanscribe_cleanup.cli:app"
+
 [dependency-groups]
-dev = []
+dev = [
+  "hypothesis>=6,<7",
+  "pytest>=8,<9",
+  "pytest-cov>=6,<8",
+  "ruff>=0.12,<1",
+]
 train = [
   "accelerate>=1.10,<2",
   "datasets>=4,<5",
@@ -33,3 +41,16 @@ train = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/oceanscribe_cleanup"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+markers = [
+  "model_download: manual integration tests that download model artifacts",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

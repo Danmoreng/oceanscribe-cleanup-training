@@ -3,12 +3,24 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
+.mypy_cache/
+.coverage
+htmlcov/
+.env
+dist/
+build/
+*.egg-info/
 
 # Local data and generated artifacts
-data/
-runs/
-artifacts/
-reports/generated/
+/data/**
+/runs/**
+/artifacts/**
+/models/**
+/cache/**
+/reports/generated/**
+
+!tests/fixtures/**
 
 # Model and dataset files
 *.safetensors
@@ -17,6 +29,10 @@ reports/generated/
 *.arrow
 *.wav
 *.flac
+*.pt
+*.pth
+*.ckpt
+pytorch_model.bin
 
 # Editors and operating systems
 .idea/
