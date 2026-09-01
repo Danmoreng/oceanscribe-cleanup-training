@@ -108,5 +108,22 @@ def prepare_external_smoke(
     typer.echo(f"Wrote manifest to {manifest_path}")
 
 
+@app.command("train")
+def train(
+    config: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False)],
+    dataset: Annotated[Path, typer.Option("--dataset", exists=True, dir_okay=False)],
+    output_dir: Annotated[Path, typer.Option("--output-dir")],
+) -> None:
+    """Run one pinned BF16 LoRA training configuration and verify adapter reload."""
+    from .training import train_run
+
+    try:
+        report = train_run(config, dataset, output_dir)
+    except Exception as error:
+        typer.echo(f"Training failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(json.dumps(report, indent=2, sort_keys=True))
+
+
 if __name__ == "__main__":
     app()
