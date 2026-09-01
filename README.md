@@ -9,12 +9,17 @@ selected model and context length after model quality has been demonstrated.
 
 ## Model-facing format
 
-The payload is plain text. There is no JSON response and no long system prompt.
+The payload is a raw completion sequence. There is no JSON response, system
+prompt, role message, or chat template.
 
 ```text
 Cleanup
 Language: de-DE
 Commands: on
+<terminology>
+OceanScribe
+Qwen3.5
+</terminology>
 <transcript>
 äh hallo Peter neuer Absatz danke für deine Nachricht
 </transcript>
@@ -29,9 +34,16 @@ Hallo Peter.
 Danke für deine Nachricht.
 ```
 
-The formatter places these user and assistant messages into the official,
-pinned Qwen chat template. At inference time generation stops at the model's
-normal end-of-turn token.
+The formatter concatenates the exact prompt and cleaned completion directly and
+appends the tokenizer's existing `<|endoftext|>` token. Training supervises only
+the cleaned completion and that final token. At inference time OceanScribe sends
+the same raw prefix through `Output:\n` and generation stops at
+`<|endoftext|>` or the configured output-token limit.
+
+The terminology block is always present and may be empty. Its entries are
+canonical spelling hints, not mandatory output words. Terms may appear in the
+transcript, may have been mistranscribed, or may be irrelevant to that request.
+Aliases are deliberately not part of the contract.
 
 ## Repository layout
 
@@ -72,9 +84,9 @@ untested Torch/CUDA combination on the laptop.
 
 ## Current status
 
-The repository currently contains the agreed prompt formatter, initial configs,
-tests, and a concise implementation plan. Dataset ingestion, model loading, the
-collator, and training loop are the next milestone.
+The repository currently contains the agreed raw-completion formatter, initial
+configs, tests, and a concise implementation plan. Dataset ingestion, model
+loading, the completion-only collator, and training loop are the next milestone.
 
 ## License
 

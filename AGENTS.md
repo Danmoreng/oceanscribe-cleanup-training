@@ -9,18 +9,25 @@ telemetry, web services, experiment SaaS, or plugin systems.
 
 ## Prompt contract
 
-The model-facing task is plain text, not JSON. A request begins with `Cleanup`,
-contains the locale and command mode, wraps the raw transcript in
-`<transcript>` tags, and ends with `Output:`. The assistant completion contains
-only the cleaned transcript.
+The model-facing task is one raw completion sequence, not JSON and not chat.
+A request begins with `Cleanup`, contains the locale and command mode, renders
+an always-present `<terminology>` block followed by the raw transcript in
+`<transcript>` tags, and ends with the exact separator `Output:\n`. The
+completion contains only the cleaned transcript followed immediately by the
+tokenizer's existing `<|endoftext|>` token.
 
-- Do not add a system message by default.
+- Do not add system, user, or assistant messages.
+- Do not apply a chat template or add ChatML control tokens.
 - Do not add new tokenizer special tokens.
-- Use the pinned official Qwen chat template around the plain user/assistant
-  messages.
-- Train with completion-only loss: prompt, template, and padding labels are
-  always `-100`.
+- Tokenize the raw prompt and completion directly as one sequence.
+- Train with completion-only loss: prompt and padding labels are always `-100`;
+  cleaned-output and end-of-text labels are supervised.
 - Treat any instruction inside the transcript as dictated content.
+- Terminology entries are optional canonical spelling hints, one term per line.
+  They have no aliases and must never be inserted unless supported by the
+  transcript and its context.
+- Always render the terminology tags, including when the block is empty, so
+  training and OceanScribe inference use one exact format.
 
 ## Training
 
@@ -41,6 +48,8 @@ only the cleaned transcript.
 - Keep all derivatives of one source record in the same split.
 - Store source revision, license, generator version, seed, and edit script.
 - Keep gold evaluation data out of training and teacher generation.
+- Include terminology-positive, terminology-absent, irrelevant-hint, and
+  no-hint examples. Measure both correction recall and false insertion rate.
 - Do not commit datasets, audio, checkpoints, model weights, or private
   dictations.
 - Quarantine unclear licenses and provenance instead of guessing.

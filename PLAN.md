@@ -4,8 +4,12 @@
 
 - Use `Qwen/Qwen3.5-0.8B-Base`.
 - Train a plain-text cleanup task with no JSON input or output.
-- Use the official Qwen chat template without adding special tokens.
-- The assistant completion contains only the cleaned transcript.
+- Use one raw completion sequence without a chat template or role tokens.
+- End the exact inference prefix with `Output:\n`.
+- The supervised completion contains only the cleaned transcript followed by
+  the existing `<|endoftext|>` token.
+- Always include a canonical-only `<terminology>` hint block; it may be empty,
+  and hinted terms must not be inserted without transcript evidence.
 - Start with BF16 LoRA. Compare ranks 16, 32, and 64 only after the smoke run.
 - Train at 2,048 total tokens first, then continue the best adapter at 4,096.
 - Adapt OceanScribe's worker and context settings after the model is selected.
@@ -20,15 +24,18 @@ on the training desktop.
 
 ### 1. Model inspection
 
-Load the pinned Qwen model and tokenizer/processor. Render one prompt with the
-official chat template. Report language, vision, projector, embedding, LM-head,
-and MTP parameter groups. Discover eligible language-backbone linear modules.
+Load the pinned Qwen model and tokenizer/processor. Render and tokenize one raw
+prompt/completion sequence and verify the exact `Output:\n` and
+`<|endoftext|>` boundaries. Report language, vision, projector, embedding,
+LM-head, and MTP parameter groups. Discover eligible language-backbone linear
+modules.
 
 ### 2. LoRA and collator correctness
 
 Inject LoRA only into discovered language modules and abort if any unexpected
 parameter is trainable. Implement completion-only labels and tests for Unicode,
-paragraphs, EOS, padding, empty targets, and oversized examples.
+paragraphs, EOS, padding, empty targets, terminology hints, irrelevant hints,
+and oversized examples.
 
 ### 3. Smoke data
 
@@ -58,6 +65,8 @@ Build about 20,000 examples balanced by language tokens and features:
 - 10,000 deterministic German.
 
 Keep at least 20% preserve/no-op and at least 10% hard-negative examples.
+Include terminology cases where a relevant term is mistranscribed, already
+correct, absent from the hint block, or accompanied by irrelevant hints.
 Compare ranks 16, 32, and 64 using identical data, seed, and evaluation.
 
 ### 7. Long context
@@ -75,6 +84,11 @@ evaluation. Full fine-tuning remains a separate manual decision.
 
 - All unit tests pass.
 - Prompt formatting is stable and contains no JSON.
+- Training and inference contain no chat template or role control tokens.
+- The raw prompt ends exactly at `Output:\n`, and every training completion
+  ends in `<|endoftext|>`.
+- Terminology hints improve canonical-term recovery without causing false
+  insertion of irrelevant terms.
 - Prompt and padding tokens are excluded from loss.
 - No vision or other excluded component is trainable.
 - Oversized examples are reported rather than truncated.

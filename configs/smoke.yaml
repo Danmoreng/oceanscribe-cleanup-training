@@ -8,7 +8,12 @@ model:
 format:
   task_keyword: Cleanup
   commands_mode: on
-  assistant_output_only: true
+  raw_completion: true
+  chat_template: false
+  output_separator: "Output:\n"
+  eos_token: "<|endoftext|>"
+  terminology_block: always
+  terminology_aliases: false
 
 data:
   sotto_en: 100
