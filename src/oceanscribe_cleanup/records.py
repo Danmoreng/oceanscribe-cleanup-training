@@ -108,6 +108,7 @@ class CleanupRecord(CleanupExample):
     edit_script: tuple[EditOperation, ...] = ()
     synthetic: StrictBool
     generator_version: str | None = None
+    generation_kind: Literal["deterministic", "stochastic"] | None = None
     seed: int | None = None
     parent_id: str | None = None
     quality_flags: tuple[str, ...] = ()
@@ -130,6 +131,12 @@ class CleanupRecord(CleanupExample):
 
     @model_validator(mode="after")
     def require_synthetic_provenance(self) -> CleanupRecord:
-        if self.synthetic and (not self.generator_version or self.seed is None):
-            raise ValueError("synthetic records require generator_version and seed")
+        if self.synthetic:
+            if not self.generator_version:
+                raise ValueError("synthetic records require generator_version")
+            if self.seed is None and not (
+                self.generation_kind == "stochastic"
+                and "generation-seed-unavailable" in self.quality_flags
+            ):
+                raise ValueError("synthetic records require seed or explicit stochastic provenance")
         return self

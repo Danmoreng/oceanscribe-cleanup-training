@@ -56,3 +56,12 @@ def test_synthetic_records_require_generator_provenance() -> None:
         valid_record(synthetic=True)
     record = valid_record(synthetic=True, generator_version="generator-v1", seed=42)
     assert record.generator_version == "generator-v1"
+
+
+def test_stochastic_generation_never_invents_an_unavailable_seed():
+    with pytest.raises(ValidationError):
+        valid_record(synthetic=True, generator_version="teacher-v1", generation_kind="stochastic")
+    record = valid_record(synthetic=True, generator_version="teacher-v1",
+                          generation_kind="stochastic",
+                          quality_flags=["generation-seed-unavailable"])
+    assert record.seed is None

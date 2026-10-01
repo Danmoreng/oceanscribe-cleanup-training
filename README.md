@@ -310,6 +310,37 @@ The report is a physical memory probe, not corpus data or a quality evaluation.
 
 ## License
 
+The first bilingual pilot freezes the original reviewed CSV with English
+KEEP/FIX references and German PASS translations. It retains 1,026 original
+paired families after excluding 14 non-conservative English pairs. Locale,
+preserve and unsupported-hint derivatives stay in the same family split as
+the earlier English smoke. With the 200 original templates, this produces
+3,452 records: 3,094 train / 358 validation, equally split by language.
+Training contains 21% marked preserve and 16% hard-negative records; sampling
+balances expected language tokens. Generated teacher seeds remain null, with
+explicit stochastic provenance; augmentation uses its own seed 42.
+
+```bash
+uv run oceanscribe-cleanup prepare-bilingual-pilot \
+  --csv data/oceanscribe-review-en-de-intermediate-recovered-1175.csv \
+  --revision dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68 \
+  --output-dir data/processed/bilingual-reviewed-pilot-v1
+
+uv run oceanscribe-cleanup train \
+  --config configs/runs/bilingual-pilot-r16-fresh.yaml \
+  --dataset data/processed/bilingual-reviewed-pilot-v1/records.jsonl \
+  --output-dir runs/qwen35-08b-bilingual-pilot-r16-fresh
+```
+
+`bilingual-pilot-r16-continue.yaml` uses the identical data, learning rate and
+100-step schedule but initializes from the earlier English smoke adapter.
+Run it sequentially after the fresh trial. Both use micro-batch 1, accumulation
+16, and best-validation-loss selection every 25 steps. Evaluate both on the
+same bilingual validation subset and the separate synthetic challenge suite.
+These pilot translations are model-generated validation/training material,
+not independent human gold. Luna can continue updating its separate output
+while these immutable snapshots train.
+
 The training code is Apache-2.0. Datasets, base models, trained weights, and
 other external artifacts retain their own licenses and must be registered in
 `DATA_SOURCES.md` and generated manifests.

@@ -202,5 +202,24 @@ def prepare_targeted_command(
     typer.echo(json.dumps(prepare_targeted(output_dir, seed), indent=2))
 
 
+@app.command("prepare-bilingual-pilot")
+def prepare_bilingual_pilot_command(
+    csv_path: Annotated[Path, typer.Option("--csv", exists=True, dir_okay=False)],
+    revision: Annotated[str, typer.Option("--revision")],
+    output_dir: Annotated[Path, typer.Option("--output-dir")],
+    seed: Annotated[int, typer.Option("--seed")] = 42,
+) -> None:
+    """Freeze reviewed ChatGPT Pro pairs, preserving existing source-family holdouts."""
+    from transformers import AutoTokenizer
+
+    from .bilingual_csv import prepare_bilingual
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        "Qwen/Qwen3.5-0.8B-Base", revision=revision, trust_remote_code=False,
+    )
+    records = prepare_bilingual(csv_path, tokenizer, output_dir, seed=seed)
+    typer.echo(f"Wrote {len(records)} records to {output_dir}")
+
+
 if __name__ == "__main__":
     app()
