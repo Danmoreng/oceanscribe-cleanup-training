@@ -25,6 +25,7 @@ build/
 # Model and dataset files
 *.safetensors
 *.gguf
+*.q35h
 *.parquet
 *.arrow
 *.wav

@@ -49,7 +49,8 @@ class TokenizedCleanupDataset:
 def load_cleanup_records(path: str | Path) -> tuple[CleanupRecord, ...]:
     records: list[CleanupRecord] = []
     seen_ids: set[str] = set()
-    seen_pairs: set[tuple[str, str]] = set()
+    seen_pairs: set[tuple[Any, ...]] = set()
+    family_splits: dict[tuple[str, str | None, str], str] = {}
     with Path(path).open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             try:
@@ -60,9 +61,17 @@ def load_cleanup_records(path: str | Path) -> tuple[CleanupRecord, ...]:
                 ) from error
             if record.id in seen_ids:
                 raise ValueError(f"{path}:{line_number}: duplicate record id {record.id!r}")
-            pair = (record.transcript.casefold(), record.output.casefold())
+            pair = (
+                record.language, record.commands, record.terminology,
+                record.transcript.casefold(), record.output.casefold(),
+            )
             if pair in seen_pairs:
                 raise ValueError(f"{path}:{line_number}: duplicate transcript/output pair")
+            family = (record.source_name, record.source_revision,
+                      record.source_record_id or record.parent_id or record.id)
+            if family in family_splits and family_splits[family] != record.split:
+                raise ValueError(f"{path}:{line_number}: source family crosses split boundaries")
+            family_splits[family] = record.split
             seen_ids.add(record.id)
             seen_pairs.add(pair)
             records.append(record)
@@ -106,6 +115,15 @@ def validate_dataset_against_config(records: Sequence[CleanupRecord], config: Ru
         raise ValueError(
             f"config expects {configured_total} total records, dataset contains {len(records)}"
         )
+    for locale, expected_count in (("en", config.data.synthetic_en),
+                                   ("de", config.data.synthetic_de)):
+        actual_count = sum(r.synthetic and r.language.startswith(locale) for r in records)
+        if expected_count is not None and actual_count != expected_count:
+            raise ValueError(
+                f"config expects {expected_count} synthetic {locale}, got {actual_count}"
+            )
+    if config.commands_mode.value == "disabled" and any(record.commands for record in records):
+        raise ValueError("disabled commands_mode requires commands=false on every record")
     if config.commands_mode.value == "enabled" and not all(record.commands for record in records):
         raise ValueError("enabled commands_mode requires commands=true on every record")
     if not any(record.split == "train" for record in records):
@@ -114,6 +132,23 @@ def validate_dataset_against_config(records: Sequence[CleanupRecord], config: Ru
         raise ValueError("dataset has no validation records")
     if any(record.split == "test" for record in records):
         raise ValueError("gold test records must not enter a training run")
+    train = [r for r in records if r.split == "train"]
+    for feature, minimum in (("preserve", config.data.preserve_minimum),
+                             ("hard-negative", config.data.hard_negative_minimum)):
+        if minimum is not None and sum(feature in r.features for r in train) / len(train) < minimum:
+            raise ValueError(f"training records do not meet the {feature} minimum of {minimum}")
+
+
+def language_sampling_weights(
+    records: Sequence[CleanupRecord], examples: Sequence[TokenizedExample], mode: str,
+) -> list[float]:
+    """Equalize expected language tokens or records using replacement sampling."""
+    if len(records) != len(examples) or not records:
+        raise ValueError("sampling needs matching nonempty records and tokenized examples")
+    totals: Counter[str] = Counter()
+    for record, example in zip(records, examples, strict=True):
+        totals[record.language.split("-")[0]] += example.sequence_length if mode == "tokens" else 1
+    return [1 / totals[r.language.split("-")[0]] for r in records]
 
 
 def tokenize_records(
@@ -122,6 +157,7 @@ def tokenize_records(
     *,
     max_sequence_length: int,
     gradient_accumulation_steps: int,
+    per_device_train_batch_size: int = 1,
 ) -> tuple[TokenizedCleanupDataset, TokenizedCleanupDataset, DatasetStatistics]:
     validate_tokenizer_contract(tokenizer)
     train: list[TokenizedExample] = []
@@ -150,7 +186,9 @@ def tokenize_records(
         average_sequence_tokens=average_sequence,
         maximum_sequence_tokens=max(example.sequence_length for example in all_examples),
         non_padding_tokens_per_optimizer_step=(
-            mean(example.sequence_length for example in train) * gradient_accumulation_steps
+            mean(example.sequence_length for example in train)
+            * gradient_accumulation_steps
+            * per_device_train_batch_size
         ),
     )
     return TokenizedCleanupDataset(train), TokenizedCleanupDataset(validation), statistics
@@ -231,6 +269,39 @@ def _inject_lora(model: Any, config: RunConfig) -> tuple[Any, tuple[str, ...]]:
     return model, allowlist
 
 
+def _load_training_adapter(
+    model: Any, config: RunConfig, resolved_revision: str,
+) -> tuple[Any, tuple[str, ...]]:
+    """Continue a saved adapter as a new run, with a fresh optimizer/scheduler."""
+    from peft import PeftConfig, PeftModel
+
+    assert config.resume is not None
+    resume = config.resume
+    if resume.expected_base_model_revision != resolved_revision:
+        raise ValueError("continuation base model revision mismatch")
+    adapter_path = Path(resume.adapter_path)
+    adapter_config = PeftConfig.from_pretrained(adapter_path)
+    if adapter_config.base_model_name_or_path != config.model.id:
+        raise ValueError("saved adapter base model repository mismatch")
+    if (adapter_config.r, adapter_config.lora_alpha) != (config.lora.rank, config.lora.alpha):
+        raise ValueError("saved adapter rank/alpha mismatch")
+    if adapter_config.lora_dropout != config.lora.dropout:
+        raise ValueError("saved adapter dropout mismatch")
+    parent_manifest = adapter_path.parent / "run-manifest.json"
+    if not parent_manifest.is_file():
+        raise ValueError("continuation requires the parent run-manifest.json beside the adapter")
+    parent = RunManifest.model_validate(json.loads(parent_manifest.read_text()))
+    if parent.model_revision != resolved_revision:
+        raise ValueError("saved adapter parent model revision mismatch")
+    if parent.prompt_contract_version != resume.expected_prompt_contract:
+        raise ValueError("saved adapter prompt contract mismatch")
+    model.requires_grad_(False)
+    allowlist = discover_language_linear_modules(model)
+    model = PeftModel.from_pretrained(model, adapter_path, is_trainable=True)
+    assert_expected_trainable_parameters(model, allowlist)
+    return model, allowlist
+
+
 def train_run(
     config_path: str | Path,
     records_path: str | Path,
@@ -271,11 +342,15 @@ def train_run(
         tokenizer,
         max_sequence_length=config.training.max_sequence_length,
         gradient_accumulation_steps=config.training.gradient_accumulation_steps,
+        per_device_train_batch_size=config.training.per_device_train_batch_size,
     )
 
     model = _load_text_model(config.model.id, resolved_revision)
     model.config.use_cache = config.training.use_cache
-    model, allowlist = _inject_lora(model, config)
+    model, allowlist = (
+        _load_training_adapter(model, config, resolved_revision)
+        if config.resume else _inject_lora(model, config)
+    )
     if config.training.gradient_checkpointing:
         model.enable_input_require_grads()
 
@@ -325,6 +400,9 @@ def train_run(
         eval_steps=training.eval_steps,
         save_strategy="steps",
         save_steps=training.save_steps,
+        load_best_model_at_end=training.load_best_model_at_end,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
         logging_strategy="steps",
         logging_steps=training.logging_steps,
         logging_first_step=True,
@@ -337,7 +415,32 @@ def train_run(
         include_num_input_tokens_seen="non_padding",
     )
     assert tokenizer.pad_token_id is not None
-    trainer = Trainer(
+    trainer_class = Trainer
+    if config.data.balance_by is not None:
+        if arguments.world_size != 1:
+            raise ValueError("language balancing currently supports a single training rank")
+        train_records = [r for r in records if r.split == "train"]
+        weights = language_sampling_weights(
+            train_records, train_dataset._examples, config.data.balance_by
+        )
+        (run_dir / "sampling.json").write_text(json.dumps({
+            "mode": config.data.balance_by, "replacement": True,
+            "seed": training.data_seed,
+            "weights": dict(zip((r.id for r in train_records), weights, strict=True)),
+        }, indent=2) + "\n", encoding="utf-8")
+
+        class BalancedTrainer(Trainer):
+            def _get_train_sampler(self, train_dataset=None):
+                from torch.utils.data import WeightedRandomSampler
+
+                generator = torch.Generator().manual_seed(
+                    training.data_seed + int(self.state.epoch or 0)
+                )
+                return WeightedRandomSampler(weights, len(weights), replacement=True,
+                                             generator=generator)
+
+        trainer_class = BalancedTrainer
+    trainer = trainer_class(
         model=model,
         args=arguments,
         train_dataset=train_dataset,
@@ -369,6 +472,11 @@ def train_run(
         "final_metrics": final_metrics,
         "adapter_dir": str(adapter_dir),
         "adapter_reload_verified": True,
+        "best_checkpoint": trainer.state.best_model_checkpoint,
+        "best_metric": trainer.state.best_metric,
+        "adapter_is_best_checkpoint": training.load_best_model_at_end,
+        "continued_from_adapter": config.resume.adapter_path if config.resume else None,
+        "continuation_optimizer": "fresh" if config.resume else None,
         "trainable_parameters": trainable_parameters,
         "peak_gpu_memory_bytes": torch.cuda.max_memory_allocated(),
         "observed_non_padding_tokens_per_second": (

@@ -10,7 +10,7 @@ from oceanscribe_cleanup.config import CommandsMode, RunConfig, load_config, val
 
 def test_all_repository_configs_validate() -> None:
     paths = validate_config_tree("configs")
-    assert len(paths) == 8
+    assert set(paths) == set(Path("configs").rglob("*.yaml"))
 
 
 def test_enabled_remains_an_enum_not_a_yaml_bool() -> None:
@@ -37,3 +37,21 @@ def test_yaml_on_is_not_a_valid_commands_mode(tmp_path: Path) -> None:
     )
     with pytest.raises(ValidationError):
         load_config(malformed)
+
+
+def test_best_checkpoint_requires_aligned_save_and_eval():
+    config = load_config("configs/runs/smoke-r16.yaml").model_dump(mode="json")
+    config["training"].update(load_best_model_at_end=True, save_steps=3, eval_steps=2)
+    with pytest.raises(ValidationError, match="save_steps divisible"):
+        RunConfig.model_validate(config)
+
+
+def test_stage_a_adapter_continuation_checks_revision():
+    config = load_config("configs/runs/smoke-r16.yaml").model_dump(mode="json")
+    config["resume"] = {"adapter_path": "local/adapter-final",
+                        "expected_base_model_revision": config["model"]["revision"],
+                        "expected_prompt_contract": "raw-v1"}
+    assert RunConfig.model_validate(config).training.max_sequence_length == 2048
+    config["resume"]["expected_base_model_revision"] = "a" * 40
+    with pytest.raises(ValidationError, match="resume base revision"):
+        RunConfig.model_validate(config)

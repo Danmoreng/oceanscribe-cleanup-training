@@ -12,6 +12,9 @@
 - Stage A uses BF16 LoRA at at most 2,048 total tokens; Stage B continues an
   explicit selected adapter at at most 4,096.
 - Packing and silent truncation remain disabled.
+- Deployment uses the neighboring `qwen35-cpu` engine and its custom
+  H128/Q4-G32-DOT4 `.q35h` weights. `qwen35x` BF16 GPU inference is an optional
+  evaluation backend after comparison with the Transformers reference.
 
 ## Completed contract-hardening milestone
 
@@ -40,6 +43,33 @@
   loss check. Micro-batch 4 with four accumulation steps delivered the best
   safe throughput; batch 8 and batch 2 without checkpointing exceeded 12 GB.
 
+## Completed RTX 5080 laptop smoke milestone
+
+- Reused the successful pinned environment on the RTX 5080 Laptop (16 GB).
+- Froze 400 unchanged English `KEEP` examples from the local reviewed CSV,
+  preserving source-family holdouts: 360 train / 40 validation.
+- Completed 50 rank-16 BF16 LoRA steps and verified adapter reload. Validation
+  loss fell from 0.54124 to 0.16467; greedy held-out WER was 0.18621, with
+  11/40 whitespace-normalized exact outputs and EOS on all 40 outputs.
+- Peak training allocation was about 9.4 GiB. The longest example was 690
+  total tokens, so this does not establish full 2,048-token batch capacity.
+- Meaning changes remain in some outputs. Add independent German/English
+  checks for negation, self-correction, omitted clauses, unsupported hints and
+  preserve behavior before using this adapter in OceanScribe.
+- Generated 200 original bilingual diagnostic records and a separate 50-record
+  synthetic challenge suite. The existing smoke passed annotated checks on
+  23/25 English and 17/25 German cases; real independently reviewed gold is
+  still needed. German canonical-term correction failed both opportunities.
+- Verified token-balanced sampling, best-checkpoint selection and adapter
+  continuation through two separate two-step GPU runs.
+- A 2,048-token capacity probe passed at micro-batch 1 (~7.3 GiB allocated);
+  micro-batch 2 was marginal, and 4 failed. Use batch 1 / accumulation 16 for
+  full-length Stage A training.
+- Native import proof: merge preserved all six HF completions; both engine
+  tokenizers matched all six prompts. GPU BF16 output matched 4/6 and
+  uncalibrated CPU text 3/6. Investigate semantic/format regressions and collect
+  cleanup calibration before promoting a native backend or final artifact.
+
 ## Remaining milestones
 
 ### 0. Target-machine and dependency proof
@@ -59,15 +89,21 @@ classification manually. Freeze vision, projector, embeddings, LM head, and
 MTP; inject LoRA only into the printed language `Linear` allowlist and abort on
 any unexpected trainable parameter.
 
-Run a small, isolated A/B smoke between `raw-v1` and the official Qwen template
-before declaring the production contract permanently frozen. This is a
-measurement task, not permission to apply a chat template to raw-v1 data.
+Keep `raw-v1` identical in training, Transformers evaluation and both native
+engines. The Base checkpoint and existing EOS remain the production contract.
 
-### 2. Base GGUF compatibility proof
+### 2. Native engine compatibility proof
 
-Before training, convert the pinned base revision with a pinned llama.cpp
-commit. Compare 20 fixed greedy prompts between Transformers and llama.cpp,
-including empty-output and EOS behavior. Record both revisions and outputs.
+Record the native engine commits and binary hashes. Compare prompt token IDs
+and fixed greedy completions against Transformers, including German/English,
+empty output, EOS, terminology and literal instructions within transcripts.
+Use raw `--prompt-file`, never a chat input flag. The GPU engine supports
+`--stop-token 248044`; the CPU CLI stops on the tokenizer's existing EOS.
+
+The engines expect `model.language_model.*` tensors; the text-only HF model
+exports `model.*`. Prepare a separate native-loader directory with an explicit
+lossless key mapping and tied embedding/head assertion. Keep a standard HF
+directory for reload and reference checks.
 
 ### 3. Data ingestion and manifests
 
@@ -84,10 +120,20 @@ prompt/target lengths, non-padding tokens per optimizer step, and oversize
 counts. Save a complete run manifest, reload the adapter, and inspect German and
 English results.
 
-### 5. Merged GGUF proof
+### 5. Merged native export proof
 
-Merge Base + LoRA to an HF model, convert that result to GGUF, and repeat the
-same pinned parity tests. Direct LoRA-to-GGUF conversion is not required.
+Merge Base + the selected LoRA into BF16 HF weights. Verify that merging itself
+preserves completions; compare the native GPU BF16 backend before using it for
+long evaluations. Then pack H128/Q4-G32-DOT4 with `qwen35_cpu_pack` and run the
+same quality suite on the native CPU engine. Exact quantized output identity
+is not assumed: record output drift and semantic/terminology regressions.
+
+An uncalibrated `mse16` pack is only an import/format probe. For the final
+artifact, collect fresh importance/covariance statistics from the merged
+cleanup checkpoint on disjoint, representative raw-v1 calibration inputs.
+Do not reuse statistics from the published Instruct checkpoint or include
+gold evaluation examples in calibration. Hash the source weights, calibration
+selection, native artifact, tokenizer, commands and engines.
 
 ### 6. v0 comparison
 
@@ -125,4 +171,7 @@ Full fine-tuning remains a separate manual decision.
   fields, floating revisions, and oversized examples fail explicitly.
 - No excluded model component is trainable.
 - The smoke adapter saves, reloads, and improves representative examples.
-- The merged smoke model passes pinned GGUF/llama.cpp parity checks.
+- The merged smoke model reloads in Transformers and passes native GPU BF16
+  parity checks before that engine is used for evaluation.
+- The final calibrated `.q35h` passes the held-out cleanup suite on
+  `qwen35-cpu`, with measured quantization drift and correct EOS behavior.

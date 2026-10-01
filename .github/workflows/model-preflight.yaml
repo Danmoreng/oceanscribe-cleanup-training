@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: uv sync --group train
+      - run: uv sync --locked --group train
       - name: Inspect tokenizer contract
         run: >-
           uv run oceanscribe-cleanup tokenizer-preflight

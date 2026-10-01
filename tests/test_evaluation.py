@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from oceanscribe_cleanup.evaluation import (
     GenerationResult,
     normalized_exact,
@@ -36,3 +38,16 @@ def test_adapter_metrics_improve_for_exact_fixture() -> None:
     assert scores["adapter"]["normalized_exact_matches"] == 1
     assert scores["adapter"]["eos_stop_rate"] == 1
     assert scores["delta"]["cer"] < 0
+
+
+def test_quality_metrics_distinguish_missing_and_inserted_terms():
+    first = replace(result("unrelated", "OceanScribe is ready."),
+                    reference="OceanScribe is ready.",
+                    checks={"corrected_terms": ["OceanScribe"], "absent_terms": ["NebulaForge"]})
+    second = replace(result("unrelated", "NebulaForge is ready."), id="second",
+                     reference="It is ready.", checks={"absent_terms": ["NebulaForge"]})
+    quality = score_outputs([first, second])["adapter"]["quality_checks"]
+    assert quality["term_correction_recall"] == 1
+    assert quality["false_insertion_rate"] == 0.5
+    assert quality["passed_records"] == 1
+    assert quality["failures"][0]["id"] == "second"
