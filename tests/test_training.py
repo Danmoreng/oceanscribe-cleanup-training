@@ -8,7 +8,9 @@ import pytest
 from oceanscribe_cleanup.config import load_config
 from oceanscribe_cleanup.records import CleanupRecord
 from oceanscribe_cleanup.training import (
+    language_sampling_weights,
     load_cleanup_records,
+    tokenize_records,
     validate_dataset_against_config,
     validate_dataset_manifest,
 )
@@ -57,3 +59,40 @@ def test_dataset_must_match_smoke_config() -> None:
     ]
     with pytest.raises(ValueError, match="expects 200 sotto"):
         validate_dataset_against_config(rows, config)  # type: ignore[arg-type]
+
+
+def test_token_statistics_count_microbatch_and_only_training_records() -> None:
+    from test_data_prep import FakeTokenizer
+
+    rows = [
+        CleanupRecord.model_validate(record("train", split="train", source="sotto")),
+        CleanupRecord.model_validate(record("validation", split="validation", source="aawaaz")),
+    ]
+    train, _, stats = tokenize_records(
+        rows, FakeTokenizer(), max_sequence_length=2048,
+        gradient_accumulation_steps=4, per_device_train_batch_size=4,
+    )
+    assert stats.non_padding_tokens_per_optimizer_step == train[0].sequence_length * 16
+
+
+def test_hint_variants_are_distinct_but_family_split_leakage_is_rejected(tmp_path):
+    first = record("one", split="train", source="sotto")
+    second = {**first, "id": "one-hint", "terminology": ["OceanScribe"]}
+    path = tmp_path / "records.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in [first, second]) + "\n")
+    assert len(load_cleanup_records(path)) == 2
+    second.update(language="de-DE", split="test")
+    path.write_text("\n".join(json.dumps(r) for r in [first, second]) + "\n")
+    with pytest.raises(ValueError, match="family crosses split"):
+        load_cleanup_records(path)
+
+
+def test_token_balancing_equalizes_expected_language_tokens():
+    from oceanscribe_cleanup.tokenization import TokenizedExample
+
+    records = [CleanupRecord.model_validate(record(str(i), split="train", source="fixture"))
+               for i in range(3)]
+    records[2] = records[2].model_copy(update={"language": "de-DE"})
+    examples = [TokenizedExample(tuple(range(n)), (), (), 0, n) for n in [10, 30, 100]]
+    weights = language_sampling_weights(records, examples, "tokens")
+    assert weights[0] * 10 + weights[1] * 30 == pytest.approx(weights[2] * 100)

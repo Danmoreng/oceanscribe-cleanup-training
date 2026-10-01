@@ -22,8 +22,10 @@ oceanscribe-cleanup = "oceanscribe_cleanup.cli:app"
 [dependency-groups]
 dev = [
   "hypothesis>=6,<7",
+  "jiwer>=4,<5",
   "pytest>=8,<9",
   "pytest-cov>=6,<8",
+  "rapidfuzz>=3.14,<4",
   "ruff>=0.12,<1",
 ]
 train = [

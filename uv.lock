@@ -866,8 +866,10 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "hypothesis" },
+    { name = "jiwer" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "rapidfuzz" },
     { name = "ruff" },
 ]
 train = [
@@ -894,8 +896,10 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6,<7" },
+    { name = "jiwer", specifier = ">=4,<5" },
     { name = "pytest", specifier = ">=8,<9" },
     { name = "pytest-cov", specifier = ">=6,<8" },
+    { name = "rapidfuzz", specifier = ">=3.14,<4" },
     { name = "ruff", specifier = ">=0.12,<1" },
 ]
 train = [

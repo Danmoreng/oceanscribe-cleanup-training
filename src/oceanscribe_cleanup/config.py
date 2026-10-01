@@ -75,11 +75,14 @@ class TrainingConfig(StrictConfigModel):
     data_seed: int
     max_steps: int | None = Field(default=None, gt=0)
     epochs: int | None = Field(default=None, gt=0)
+    load_best_model_at_end: StrictBool = False
 
     @model_validator(mode="after")
     def require_one_duration(self) -> TrainingConfig:
         if (self.max_steps is None) == (self.epochs is None):
             raise ValueError("exactly one of training.max_steps or training.epochs is required")
+        if self.load_best_model_at_end and self.save_steps % self.eval_steps:
+            raise ValueError("best checkpoint selection needs save_steps divisible by eval_steps")
         return self
 
 
@@ -110,10 +113,13 @@ class RunConfig(StrictConfigModel):
 
     @model_validator(mode="after")
     def validate_resume(self) -> RunConfig:
-        if self.resume and self.training.max_sequence_length != 4096:
-            raise ValueError("continuation runs must use 4096 max_sequence_length")
         if self.resume and self.resume.expected_prompt_contract != self.prompt_contract_version:
             raise ValueError("resume prompt contract must match the run prompt contract")
+        if (
+            self.resume and self.model.revision
+            and self.resume.expected_base_model_revision != self.model.revision
+        ):
+            raise ValueError("resume base revision must match the run model revision")
         return self
 
 

@@ -1,0 +1,42 @@
+schema_version: 1
+config_type: run
+run_name: qwen35-08b-reviewed-keep-smoke-r16
+prompt_contract_version: raw-v1
+commands_mode: enabled
+model:
+  id: Qwen/Qwen3.5-0.8B-Base
+  revision: dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68
+data:
+  subset: reviewed-keep-en-400
+  sotto_en: 200
+  aawaaz_en: 200
+  synthetic_en: 0
+  synthetic_de: 0
+lora:
+  rank: 16
+  alpha: 32
+  dropout: 0.05
+training:
+  precision: bf16
+  optimizer: adamw_torch_fused
+  learning_rate: 0.0001
+  scheduler: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  gradient_checkpointing: true
+  use_cache: false
+  max_sequence_length: 2048
+  packing: false
+  truncation: false
+  oversize_policy: reject
+  eval_strategy: steps
+  eval_steps: 10
+  save_steps: 10
+  logging_steps: 5
+  save_total_limit: 3
+  seed: 42
+  data_seed: 42
+  max_steps: 50

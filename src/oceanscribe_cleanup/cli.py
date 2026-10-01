@@ -1,4 +1,4 @@
-"""Preflight commands that do not start data generation or training."""
+"""Local data preparation, model inspection, training, evaluation and export CLI."""
 
 from __future__ import annotations
 
@@ -108,6 +108,30 @@ def prepare_external_smoke(
     typer.echo(f"Wrote manifest to {manifest_path}")
 
 
+@app.command("prepare-reviewed-smoke")
+def prepare_reviewed_smoke_command(
+    csv_path: Annotated[Path, typer.Option("--csv", exists=True, dir_okay=False)],
+    revision: Annotated[str, typer.Option("--revision")],
+    output_dir: Annotated[Path, typer.Option("--output-dir")],
+    per_source: Annotated[int, typer.Option("--per-source", min=1)] = 200,
+    validation_per_source: Annotated[int, typer.Option("--validation-per-source", min=1)] = 20,
+    seed: Annotated[int, typer.Option("--seed")] = 42,
+) -> None:
+    """Freeze unchanged English KEEP references with source-family holdouts."""
+    from transformers import AutoTokenizer
+
+    from .reviewed_csv import prepare_reviewed_smoke
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        "Qwen/Qwen3.5-0.8B-Base", revision=revision, trust_remote_code=False
+    )
+    records, manifest = prepare_reviewed_smoke(
+        csv_path, tokenizer, output_dir, per_source=per_source,
+        validation_per_source=validation_per_source, seed=seed,
+    )
+    typer.echo(f"Wrote records to {records}; manifest to {manifest}")
+
+
 @app.command("train")
 def train(
     config: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False)],
@@ -134,6 +158,8 @@ def evaluate_adapter_command(
     limit: Annotated[int, typer.Option("--limit", min=1)] = 40,
     batch_size: Annotated[int, typer.Option("--batch-size", min=1)] = 4,
     max_new_tokens: Annotated[int, typer.Option("--max-new-tokens", min=1)] = 256,
+    split: Annotated[str, typer.Option("--split")] = "validation",
+    adapter_only: Annotated[bool, typer.Option("--adapter-only")] = False,
 ) -> None:
     """Greedily compare the pinned base model and one adapter on validation records."""
     from .evaluation import evaluate_adapter
@@ -147,8 +173,33 @@ def evaluate_adapter_command(
         limit=limit,
         batch_size=batch_size,
         max_new_tokens=max_new_tokens,
+        split=split,
+        compare_base=not adapter_only,
     )
     typer.echo(json.dumps(payload["scores"], indent=2, sort_keys=True))
+
+
+@app.command("merge-adapter")
+def merge_adapter_command(
+    adapter: Annotated[Path, typer.Option("--adapter", exists=True, file_okay=False)],
+    output_dir: Annotated[Path, typer.Option("--output-dir")],
+) -> None:
+    """Merge Base + LoRA into HF and native-engine BF16 weight directories."""
+    from .native_export import merge_adapter
+
+    report = merge_adapter(adapter, output_dir)
+    typer.echo(json.dumps(report, indent=2, sort_keys=True))
+
+
+@app.command("prepare-targeted")
+def prepare_targeted_command(
+    output_dir: Annotated[Path, typer.Option("--output-dir")],
+    seed: Annotated[int, typer.Option("--seed")] = 42,
+) -> None:
+    """Generate original bilingual templates with separate challenge families."""
+    from .targeted_data import prepare_targeted
+
+    typer.echo(json.dumps(prepare_targeted(output_dir, seed), indent=2))
 
 
 if __name__ == "__main__":

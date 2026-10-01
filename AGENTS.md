@@ -4,7 +4,9 @@
 
 This repository trains and evaluates a small local transcript-cleanup model for
 OceanScribe. Keep it focused on data preparation, text-only fine-tuning,
-evaluation, and eventual GGUF export. Do not add cloud inference, accounts,
+evaluation, and export to the native `qwen35-cpu` engine using the custom
+H128/Q4-G32-DOT4 `.q35h` format. The `qwen35x` GPU engine may run longer
+evaluations after parity checks against Transformers. Do not add cloud inference, accounts,
 telemetry, web services, experiment SaaS, or plugin systems.
 
 ## Prompt contract
