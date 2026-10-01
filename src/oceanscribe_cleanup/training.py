@@ -96,7 +96,7 @@ def validate_dataset_against_config(records: Sequence[CleanupRecord], config: Ru
         "sotto": config.data.sotto_en or 0,
         "aawaaz": config.data.aawaaz_en or 0,
     }
-    actual = Counter(record.source_name for record in records)
+    actual = Counter(record.source_name for record in records if not record.synthetic)
     for source, count in expected.items():
         if actual[source] != count:
             raise ValueError(
