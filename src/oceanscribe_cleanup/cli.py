@@ -137,12 +137,21 @@ def train(
     config: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False)],
     dataset: Annotated[Path, typer.Option("--dataset", exists=True, dir_okay=False)],
     output_dir: Annotated[Path, typer.Option("--output-dir")],
+    evaluation_dataset: Annotated[
+        Path | None, typer.Option("--evaluation-dataset", exists=True, dir_okay=False)
+    ] = None,
+    draw_plan: Annotated[
+        Path | None, typer.Option("--draw-plan", exists=True, dir_okay=False)
+    ] = None,
 ) -> None:
     """Run one pinned BF16 LoRA training configuration and verify adapter reload."""
     from .training import train_run
 
     try:
-        report = train_run(config, dataset, output_dir)
+        report = train_run(
+            config, dataset, output_dir,
+            evaluation_records_path=evaluation_dataset, draw_plan_path=draw_plan,
+        )
     except Exception as error:
         typer.echo(f"Training failed: {error}", err=True)
         raise typer.Exit(code=1) from error

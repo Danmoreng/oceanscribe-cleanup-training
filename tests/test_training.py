@@ -10,6 +10,7 @@ from oceanscribe_cleanup.records import CleanupRecord
 from oceanscribe_cleanup.training import (
     language_sampling_weights,
     load_cleanup_records,
+    load_training_inputs,
     tokenize_records,
     validate_dataset_against_config,
     validate_dataset_manifest,
@@ -96,3 +97,38 @@ def test_token_balancing_equalizes_expected_language_tokens():
     examples = [TokenizedExample(tuple(range(n)), (), (), 0, n) for n in [10, 30, 100]]
     weights = language_sampling_weights(records, examples, "tokens")
     assert weights[0] * 10 + weights[1] * 30 == pytest.approx(weights[2] * 100)
+
+
+@pytest.mark.parametrize("overlap", ["family", "text", "id", None])
+def test_separate_development_has_frozen_hash_and_no_train_overlap(tmp_path, overlap):
+    train = record("training", split="train", source="sotto")
+    dev = record("development", split="validation", source="sotto")
+    if overlap == "family":
+        dev["source_record_id"] = train["source_record_id"]
+    elif overlap == "text":
+        dev["transcript"] = str(train["transcript"]).upper() + "  "
+    elif overlap == "id":
+        dev["id"] = train["id"]
+    train_path = tmp_path / "train.jsonl"
+    train_path.write_text(json.dumps(train) + "\n")
+    dev_path = tmp_path / "dev.jsonl"
+    dev_path.write_text(json.dumps(dev) + "\n")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({
+        "sha256": hashlib.sha256(dev_path.read_bytes()).hexdigest(),
+        "human_reference_frozen": True,
+    }))
+    if overlap:
+        with pytest.raises(ValueError, match="overlap"):
+            load_training_inputs(train_path, dev_path)
+    else:
+        rows, manifest = load_training_inputs(train_path, dev_path)
+        assert [r.split for r in rows] == ["train", "validation"]
+        assert manifest["human_reference_frozen"]
+        assert load_cleanup_records(train_path)[0].split == "train"
+        manifest_path.write_text(json.dumps({
+            "sha256": hashlib.sha256(dev_path.read_bytes()).hexdigest(),
+            "human_reference_frozen": False,
+        }))
+        with pytest.raises(ValueError, match="human-confirmed"):
+            load_training_inputs(train_path, dev_path)

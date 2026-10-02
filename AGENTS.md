@@ -9,6 +9,17 @@ H128/Q4-G32-DOT4 `.q35h` format. The `qwen35x` GPU engine may run longer
 evaluations after parity checks against Transformers. Do not add cloud inference, accounts,
 telemetry, web services, experiment SaaS, or plugin systems.
 
+The user explicitly authorized one narrow exception on 2026-10-02: a local
+Review Studio bound only to loopback for bounded text review, microphone
+recording, the verified local OceanScribe ASR pipeline, and versioned data export.
+Use a small Python/static-frontend/SQLite implementation. No accounts, cloud ASR,
+public server, telemetry, CDNs or new plugin platform. Saving never starts
+training or publication. Start budgets are 50 review cards and 10 recording
+attempts; conscious extension is capped at 100/20. Dev/test content must remain
+outside teacher, train and calibration exports. Own recordings default to no
+external review permission. Never claim scripted or model-assisted data is
+independent human gold.
+
 ## Prompt contract
 
 The model-facing task is one raw completion sequence, not JSON and not chat.

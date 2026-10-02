@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>OceanScribe · Review Studio</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="OceanScribe Review Studio Startseite"><span class="brand-mark">O</span><span>OceanScribe <small>REVIEW STUDIO</small></span></a>
+    <div id="connection" class="connection"><i></i> Lokal verbunden</div>
+  </header>
+  <main>
+    <div id="studioStatus" class="studio-status loading" role="status" aria-live="polite">Verbinde mit lokalem Studio und lade Kampagnenstatus …</div>
+    <section class="intro">
+      <div><p class="eyebrow">PERSÖNLICHER ARBEITSBEREICH</p><h1>Gute Transkripte,<br><em>mit Bedacht geprüft.</em></h1></div>
+      <p class="intro-note">Deine Entscheidungen bleiben lokal. Speichern startet kein Training und veröffentlicht nichts.</p>
+    </section>
+    <nav class="tabs" aria-label="Arbeitsbereiche">
+      <button class="tab active" data-view="review"><span>01</span> Prüfen</button>
+      <button class="tab" data-view="record"><span>02</span> Diktieren</button>
+      <button class="tab" data-view="progress"><span>03</span> Fortschritt</button>
+    </nav>
+
+    <section id="reviewView" class="view">
+      <div class="section-head"><div><p class="eyebrow">TEXTREVIEW</p><h2>Ein Fall nach dem anderen.</h2><label class="queue-label" for="queueKind">Aufgabenart</label><select id="queueKind"><option value="repair">Unklarheiten & Reparaturen</option><option value="audit">Zufällige Kontrollen</option><option value="reference">Development-Referenzen</option><option value="comparison">Modellvergleiche</option></select></div><span id="reviewBudget" class="budget-pill">50 Aufgaben · Startbudget</span></div>
+      <div id="reviewEmpty" class="empty-state"><span class="empty-icon">✓</span><h3 id="emptyTitle">Bereit für einen kurzen Block?</h3><p id="emptyCopy">Starte bewusst bis zu fünf Karten. Bereits geöffnete Karten werden beim Fortsetzen wieder aufgenommen.</p><button class="button secondary" id="refreshReview" disabled>Studio wird verbunden …</button></div>
+      <article id="reviewCard" class="card hidden">
+        <div class="card-meta"><div><span id="cardKind" class="tag">REVIEW</span><span id="cardLocale" class="locale">DE</span></div><span id="cardRemaining" class="remaining"></span></div>
+        <h3 id="cardQuestion" class="question"></h3>
+        <details class="details"><summary>Aufgabendetails</summary><p id="cardDetail"></p></details>
+        <div class="text-columns">
+          <div class="text-panel"><label for="rawText">ROHTEXT <span>unveränderlich</span></label><pre id="rawText" class="raw-text"></pre></div>
+          <div class="text-panel"><label for="outputText">ZIELVORSCHLAG <span>bearbeitbar</span></label><textarea id="outputText" rows="8" spellcheck="true"></textarea></div>
+        </div>
+        <div class="diff-panel"><div class="diff-title">ÄNDERUNGEN IM VORSCHLAG <span>Orientierungshilfe · bitte Bedeutung selbst prüfen</span></div><div id="diffText" class="diff-text"></div></div>
+        <section id="answerComparisons" class="answer-comparisons hidden"><p class="eyebrow">VERBLINDETER MODELLVERGLEICH</p><p class="comparison-help">Die Referenz wurde festgelegt. Bewerte jede Antwort einzeln; Modellnamen bleiben verborgen.</p><div id="answerCards" class="answer-grid"></div></section>
+        <div class="form-row hidden" id="failureRow"><label for="meaningAssessment">Bedeutungsprüfung</label><select id="meaningAssessment"><option value="">Bedeutung nicht bewertet</option><option value="passed">Kein Bedeutungsfehler</option><option value="failure">Bedeutungsfehler / Inhalt fehlt</option></select><div class="check-list" id="errorCodes"></div></div>
+        <div class="card-footer"><div id="saveState" role="status">Noch nicht gespeichert</div><div class="actions"><button class="button quiet" data-action="undo">Rückgängig</button><button class="button quiet" data-action="defer">Unklar / zurückstellen</button><button class="button danger-outline" data-action="exclude">Ausschließen</button><button class="button secondary" data-action="edit">Änderung speichern</button><button class="button primary" data-action="accept">So übernehmen</button></div></div>
+      </article>
+      <div class="session-row"><span id="sessionLabel">Sitzung 0 von 5</span><button class="text-button" id="pauseButton">Für heute fertig</button></div>
+      <div class="session-track"><i id="sessionTrack"></i></div>
+    </section>
+
+    <section id="recordView" class="view hidden">
+      <div class="section-head"><div><p class="eyebrow">EIGENE SPRACHPROBEN</p><h2>Sprich wie du sprichst.</h2></div><span id="recordBudget" class="budget-pill">10 Versuche · Startbudget</span></div>
+      <div class="record-layout">
+        <article class="card record-card">
+          <div class="card-meta"><span id="recordLocale" class="locale">DE · Deutsch</span><span id="recordRemaining" class="remaining"></span></div>
+          <label class="queue-label" for="recordTaskSelect">1. Aufnahmeaufgabe auswählen</label><select id="recordTaskSelect" disabled><option>Aufgaben werden geladen …</option></select><p id="recordPromptLabel" class="eyebrow">SPRECHTEXT</p>
+          <p id="recordPrompt" class="record-prompt">Wähle eine Aufnahmeaufgabe, um zu beginnen.</p>
+          <p id="recordHelp" class="record-help">2. Text natürlich einsprechen und stoppen. 3. Das lokale Transkript abwarten, die bereinigten Ziele prüfen und speichern. Fehlende Fakten nicht aus der Vorlage ergänzen.</p><details class="details"><summary>Beabsichtigtes bereinigtes Ergebnis ansehen</summary><p id="recordTarget"></p></details>
+        <div class="record-controls"><label for="micSelect">Mikrofon</label><select id="micSelect"><option>Wird geladen …</option></select><label for="asrEngine">Lokale Transkription</label><select id="asrEngine"><option value="nemotron">OceanScribe Produktion · Nemotron</option><option value="parakeet">Parakeet · NeMo offline</option><option value="both" selected>Beide Engines vergleichen</option></select><div class="record-buttons"><button class="button primary" id="recordStart" disabled>● Aufnahme starten</button><button class="button danger-outline" id="recordStop" disabled>■ Stoppen</button></div><div class="record-meter"><span id="recordDuration">00:00</span><span id="recordStatus" role="status" aria-live="polite">Mikrofon nicht aktiv</span></div><div class="level-meter" aria-label="Mikrofonpegel"><i id="audioLevel"></i></div><audio id="playback" controls class="hidden"></audio></div>
+          <div id="asrArea" class="asr-area hidden"><div id="asrVariants"></div><div id="asrTargets"></div><button id="retryASR" class="button secondary hidden">Gespeichertes Audio erneut transkribieren</button><button id="confirmRecord" class="button primary">Transkripte und Ziele speichern</button><button id="skipRecord" class="button quiet">Diese Aufnahme verwerfen</button><button id="deleteRecording" class="button danger-outline">Aufnahme und Audio löschen</button></div>
+        </article>
+        <aside class="record-aside"><p class="eyebrow">DEIN BEITRAG</p><h3>Kurze, echte Situationen.</h3><p>Einige Aufgaben haben eine Sprechvorlage, andere sind freie Situationen. Du darfst natürlich sprechen und dich selbst korrigieren. Bitte keinen anderen Akzent nachahmen.</p><p id="asrStatus" class="notice">Lokale ASR-Konfiguration wird geprüft.</p><p class="privacy-note">Audio und Transkript werden lokal gespeichert. Deine Aufnahme ist keine Zustimmung zur Veröffentlichung.</p></aside>
+      </div>
+    </section>
+
+    <section id="progressView" class="view hidden">
+      <div class="section-head"><div><p class="eyebrow">DEIN FORTSCHRITT</p><h2>Übersichtlich und begrenzt.</h2></div><button class="button secondary" id="exportButton">Export vorbereiten</button></div>
+      <div id="statsGrid" class="stats-grid"></div>
+      <div class="progress-columns"><article class="card"><p class="eyebrow">BUDGET</p><h3>Dein geplanter Beitrag</h3><div id="budgetDetail"></div><button class="button secondary" id="extendButton">Budget bewusst erweitern</button><p class="fine-print">Nur du kannst auf höchstens 100 Reviews und 20 Aufnahmeversuche erweitern.</p></article><article class="card"><p class="eyebrow">OFFENE SPERREN</p><h3>Was noch Aufmerksamkeit braucht</h3><ul id="blockerList" class="blocker-list"></ul></article></div>
+      <p id="exportNotice" class="notice hidden" role="status"></p>
+    </section>
+    <footer><span>OceanScribe · lokal auf diesem Gerät</span><span>Kein Training beim Speichern</span></footer>
+  </main>
+  <dialog id="confirmDialog"><form method="dialog"><p id="dialogMessage">Budget erweitern?</p><div class="actions"><button class="button quiet" value="cancel">Abbrechen</button><button class="button primary" value="confirm">Bestätigen</button></div></form></dialog>
+</body>
+</html>
