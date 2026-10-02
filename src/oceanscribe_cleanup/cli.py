@@ -202,6 +202,18 @@ def prepare_targeted_command(
     typer.echo(json.dumps(prepare_targeted(output_dir, seed), indent=2))
 
 
+@app.command("prepare-fidelity-mix")
+def prepare_fidelity_mix_command(
+    dataset: Annotated[Path, typer.Option("--dataset", exists=True, dir_okay=False)],
+    output_dir: Annotated[Path, typer.Option("--output-dir")],
+    seed: Annotated[int, typer.Option("--seed")] = 73,
+) -> None:
+    """Append original fidelity templates while preserving the frozen pilot records."""
+    from .fidelity_data import prepare_fidelity_mix
+
+    typer.echo(json.dumps(prepare_fidelity_mix(dataset, output_dir, seed), indent=2))
+
+
 @app.command("prepare-bilingual-pilot")
 def prepare_bilingual_pilot_command(
     csv_path: Annotated[Path, typer.Option("--csv", exists=True, dir_okay=False)],
