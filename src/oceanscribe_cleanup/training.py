@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
@@ -12,6 +13,7 @@ from typing import Any
 
 from .collator import CompletionOnlyCollator
 from .config import RunConfig, load_config
+from .controlled_sampling import resolve_draw_plan
 from .manifests import RunManifest, repository_commit, runtime_versions, sha256_file
 from .model_inspection import (
     assert_expected_trainable_parameters,
@@ -89,6 +91,40 @@ def validate_dataset_manifest(records_path: Path, manifest_path: Path) -> dict[s
             f"dataset SHA-256 mismatch: manifest has {expected!r}, records have {actual!r}"
         )
     return payload
+
+
+def load_training_inputs(
+    records_path: Path, evaluation_records_path: Path | None = None,
+) -> tuple[tuple[CleanupRecord, ...], dict[str, Any] | None]:
+    """Read protected Development locally, keeping it outside the Train export."""
+    records = load_cleanup_records(records_path)
+    if evaluation_records_path is None:
+        return records, None
+    protected = load_cleanup_records(evaluation_records_path)
+    manifest = validate_dataset_manifest(
+        evaluation_records_path, evaluation_records_path.with_name("manifest.json")
+    )
+    if manifest.get("human_reference_frozen") is not True:
+        raise ValueError("separate Development references must be human-confirmed and frozen")
+    if any(r.split != "train" for r in records) or any(
+        r.split != "validation" for r in protected
+    ):
+        raise ValueError("separate files require Train-only and Development-only records")
+    training_ids = {r.id for r in records}
+    training_families = {
+        (r.source_name, r.source_revision, r.source_record_id or r.parent_id or r.id)
+        for r in records
+    }
+    training_texts = {" ".join(r.transcript.casefold().split()) for r in records}
+    if any(
+        r.id in training_ids
+        or (r.source_name, r.source_revision, r.source_record_id or r.parent_id or r.id)
+        in training_families
+        or " ".join(r.transcript.casefold().split()) in training_texts
+        for r in protected
+    ):
+        raise ValueError("Train/Development record, family or transcript overlap")
+    return records + protected, manifest
 
 
 def validate_dataset_against_config(records: Sequence[CleanupRecord], config: RunConfig) -> None:
@@ -306,10 +342,13 @@ def train_run(
     config_path: str | Path,
     records_path: str | Path,
     output_dir: str | Path,
+    *,
+    evaluation_records_path: str | Path | None = None,
+    draw_plan_path: str | Path | None = None,
 ) -> dict[str, Any]:
     import torch
     from peft import PeftModel
-    from transformers import AutoTokenizer, Trainer, TrainingArguments, set_seed
+    from transformers import AutoTokenizer, Trainer, TrainerCallback, TrainingArguments, set_seed
 
     config_file = Path(config_path)
     records_file = Path(records_path)
@@ -326,10 +365,31 @@ def train_run(
         raise RuntimeError("the selected CUDA device does not support BF16")
 
     resolved_revision = resolve_hugging_face_revision(config.model.id, config.model.revision)
-    records = load_cleanup_records(records_file)
+    records, protected_manifest = load_training_inputs(
+        records_file,
+        Path(evaluation_records_path) if evaluation_records_path is not None else None,
+    )
+    train_records = tuple(r for r in records if r.split == "train")
     validate_dataset_against_config(records, config)
     dataset_manifest_path = records_file.with_name("manifest.json")
     dataset_manifest = validate_dataset_manifest(records_file, dataset_manifest_path)
+    draw_plan = None
+    draw_indices = None
+    if draw_plan_path is not None:
+        if evaluation_records_path is None or config.data.balance_by is not None:
+            raise ValueError("controlled draws need separate Development and no weighted sampler")
+        if (
+            config.training.max_steps != 100
+            or config.training.per_device_train_batch_size != 1
+            or config.training.gradient_accumulation_steps != 16
+        ):
+            raise ValueError("controlled draws require 100 steps, batch 1, accumulation 16")
+        draw_plan = json.loads(Path(draw_plan_path).read_text())
+        draw_indices = resolve_draw_plan(
+            draw_plan, train_records, records_sha256=sha256_file(records_file)
+        )
+        if draw_plan.get("evaluation_sha256") != sha256_file(Path(evaluation_records_path)):
+            raise ValueError("draw plan is not bound to the frozen Development bytes")
     set_seed(config.training.seed)
 
     tokenizer = AutoTokenizer.from_pretrained(
@@ -376,6 +436,10 @@ def train_run(
     (run_dir / "lora-targets.json").write_text(
         json.dumps(list(allowlist), indent=2) + "\n", encoding="utf-8"
     )
+    if protected_manifest is not None:
+        (run_dir / "protected-evaluation-manifest.json").write_text(
+            json.dumps(protected_manifest, indent=2) + "\n", encoding="utf-8"
+        )
 
     training = config.training
     arguments = TrainingArguments(
@@ -406,6 +470,7 @@ def train_run(
         logging_strategy="steps",
         logging_steps=training.logging_steps,
         logging_first_step=True,
+        logging_nan_inf_filter=False,
         save_total_limit=training.save_total_limit,
         seed=training.seed,
         data_seed=training.data_seed,
@@ -416,7 +481,32 @@ def train_run(
     )
     assert tokenizer.pad_token_id is not None
     trainer_class = Trainer
-    if config.data.balance_by is not None:
+    if draw_indices is not None:
+        if arguments.world_size != 1:
+            raise ValueError("controlled draw plans support one training rank")
+        train_dataset = TokenizedCleanupDataset([train_dataset[i] for i in draw_indices])
+        (run_dir / "sampling.json").write_text(
+            json.dumps(draw_plan, indent=2) + "\n", encoding="utf-8"
+        )
+        (run_dir / "sampling-exposure.json").write_text(json.dumps({
+            "draws": len(draw_indices),
+            "unique_records": len(set(draw_indices)),
+            "unique_families": len({d["family_id"] for d in draw_plan["draws"]}),
+            "prompt_tokens": sum(e.prompt_length for e in train_dataset._examples),
+            "target_tokens": sum(e.target_length for e in train_dataset._examples),
+            "sequence_tokens": sum(e.sequence_length for e in train_dataset._examples),
+        }, indent=2) + "\n", encoding="utf-8")
+
+        class ControlledTrainer(Trainer):
+            def _get_train_sampler(self, train_dataset=None):
+                from torch.utils.data import SequentialSampler
+
+                return SequentialSampler(
+                    self.train_dataset if train_dataset is None else train_dataset
+                )
+
+        trainer_class = ControlledTrainer
+    elif config.data.balance_by is not None:
         if arguments.world_size != 1:
             raise ValueError("language balancing currently supports a single training rank")
         train_records = [r for r in records if r.split == "train"]
@@ -440,6 +530,72 @@ def train_run(
                                              generator=generator)
 
         trainer_class = BalancedTrainer
+    callbacks = []
+    if draw_plan is not None:
+        from .evaluation import _generate
+        from .protected_evaluation import score_protected_outputs
+
+        evaluation_file = Path(evaluation_records_path)
+        evaluation_records = tuple(r for r in records if r.split == "validation")
+        provenance = {
+            item["record_id"]: item["family_id"]
+            for item in map(
+                json.loads, evaluation_file.with_name("provenance.jsonl").read_text().splitlines()
+            )
+        }
+        evaluation_dir = evaluation_file.parent / "evaluations" / run_dir.name
+        evaluation_dir.mkdir(parents=True, exist_ok=False)
+
+        class ProtectedEvaluationCallback(TrainerCallback):
+            technical_failure = False
+
+            def on_evaluate(self, args, state, control, model=None, **kwargs):
+                destination = evaluation_dir / f"step-{state.global_step:03d}.json"
+                if destination.exists():
+                    return control
+                was_training = model.training
+                previous_padding = tokenizer.padding_side
+                try:
+                    tokenizer.padding_side = "left"
+                    outputs, eos = _generate(
+                        model, tokenizer, evaluation_records, batch_size=1, max_new_tokens=512,
+                    )
+                finally:
+                    tokenizer.padding_side = previous_padding
+                    model.train(was_training)
+                scores = score_protected_outputs(
+                    evaluation_records, outputs, eos,
+                    [provenance[r.id] for r in evaluation_records],
+                )
+                destination.write_text(json.dumps({
+                    "step": state.global_step, "scores": scores,
+                    "dataset_sha256": draw_plan["evaluation_sha256"],
+                    "decoding": {"do_sample": False, "max_new_tokens": 512, "batch_size": 1},
+                    "outputs": [
+                        {"record_id": r.id, "output": o, "stopped_at_eos": stop}
+                        for r, o, stop in zip(evaluation_records, outputs, eos, strict=True)
+                    ],
+                }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                # Meaning remains unrated until the bounded human model comparison.
+                # Technical output problems stop this branch; WER alone is not meaning.
+                if scores["generation_limit_hits"] or scores["forbidden_control_outputs"]:
+                    self.technical_failure = True
+                    control.should_training_stop = True
+                    (run_dir / "technical-stop.json").write_text(json.dumps({
+                        "step": state.global_step, "reason": "EOS-or-control-output-failure",
+                    }) + "\n", encoding="utf-8")
+                return control
+
+            def on_log(self, args, state, control, logs=None, **kwargs):
+                if logs and "loss" in logs and not math.isfinite(logs["loss"]):
+                    self.technical_failure = True
+                    control.should_training_stop = True
+                    (run_dir / "technical-stop.json").write_text(json.dumps({
+                        "step": state.global_step, "reason": "nonfinite-loss",
+                    }) + "\n", encoding="utf-8")
+                return control
+
+        callbacks.append(ProtectedEvaluationCallback())
     trainer = trainer_class(
         model=model,
         args=arguments,
@@ -450,8 +606,11 @@ def train_run(
             pad_to_multiple_of=8,
         ),
         processing_class=tokenizer,
+        callbacks=callbacks,
     )
     initial_metrics = trainer.evaluate(metric_key_prefix="initial_eval")
+    if callbacks and callbacks[0].technical_failure:
+        raise RuntimeError("parent adapter failed the protected technical output preflight")
     train_result = trainer.train()
     final_metrics = trainer.evaluate(metric_key_prefix="final_eval")
 
@@ -477,6 +636,7 @@ def train_run(
         "adapter_is_best_checkpoint": training.load_best_model_at_end,
         "continued_from_adapter": config.resume.adapter_path if config.resume else None,
         "continuation_optimizer": "fresh" if config.resume else None,
+        "technical_stop": bool(callbacks and callbacks[0].technical_failure),
         "trainable_parameters": trainable_parameters,
         "peak_gpu_memory_bytes": torch.cuda.max_memory_allocated(),
         "observed_non_padding_tokens_per_second": (

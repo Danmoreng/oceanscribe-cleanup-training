@@ -5,6 +5,10 @@ transcripts into clean text for OceanScribe. This repository is deliberately
 separate from the desktop application and contains no cloud inference or
 service integration.
 
+The explicitly requested loopback-only Review Studio supports bounded local
+text review and Nemotron/Parakeet dictation. See [the operating guide](REVIEW_STUDIO.md)
+for startup, persistence, privacy, tests, and the prerequisites for the next training phase.
+
 ## Model-facing contract
 
 `raw-v1` is the only implemented contract. Its literals and field order live in
@@ -371,6 +375,42 @@ on the original challenge set, so it was not selected as the next parent.
 Keep the old evaluation dataset fixed when comparing rounds. Newly translated
 CSV rows still require English-reference review and correct generator provenance
 before importing them; German translation completion alone is insufficient.
+
+## Controlled Review Studio continuation
+
+The October 2 Review Studio experiment uses a frozen Train-only file and a
+separate human-confirmed Development file. `--evaluation-dataset` rejects Train,
+Test, non-frozen references, and record/family/transcript overlap. Protected
+texts and per-record model outputs stay in the local protected directory.
+
+`--draw-plan` verifies the frozen dataset hashes and schedules exactly 1,600
+draws: 800 German and 800 English, family before variant. Both branches use the
+same real-ASR draws at the same positions, capped at 20 per recording family.
+Branch A draws 95% repaired stock and 5% own ASR; B draws 65% stock, 30% accepted
+original synthetics, and 5% own ASR. B requires at least 100 accepted new families.
+If the ASR pool is too small, both schedules omit it.
+
+```bash
+.venv/bin/python -m oceanscribe_cleanup.cli train \
+  --config data/prepared/controlled-ab-20261002-r2/config-A.yaml \
+  --dataset data/prepared/controlled-ab-20261002-r2/records.jsonl \
+  --evaluation-dataset data/review-studio/current/protected/snapshots/human-dev-20261002-r1/records.jsonl \
+  --draw-plan data/prepared/controlled-ab-20261002-r2/draw-plan-A.json \
+  --output-dir runs/qwen35-08b-controlled-a-20261002
+```
+
+The B invocation uses `config-B.yaml`, `draw-plan-B.json`, and a different output
+directory. Both continue the original fresh r16 pilot with fresh optimizer and
+scheduler, seed 20261002, LR 5e-5, and at most 100 steps. All four 25-step
+checkpoints are retained. Local greedy generation runs at steps 0/25/50/75/100;
+technical EOS/control/nonfinite-loss problems stop the branch. WER, CER,
+family-weighted WER, preserve and blank-line measurements are separate from
+human meaning judgments, which remain `not_evaluated` until explicitly rated.
+`adapter-final` is the last trained adapter, not an automatic quality champion.
+
+Frozen inputs, provenance, draw plans and source evidence remain local and
+ignored by Git. Saving in the Studio never launches either command. Public
+licensing, native export and publication remain separate from this experiment.
 
 ## License
 
