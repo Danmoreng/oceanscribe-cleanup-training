@@ -308,7 +308,7 @@ gradient accumulation 16 for a safe effective batch of 16 on full-length Stage A
 examples. The original batch-4 smoke remains valid for its short examples.
 The report is a physical memory probe, not corpus data or a quality evaluation.
 
-## License
+## Frozen bilingual pilot
 
 The first bilingual pilot freezes the original reviewed CSV with English
 KEEP/FIX references and German PASS translations. It retains 1,026 original
@@ -340,6 +340,39 @@ same bilingual validation subset and the separate synthetic challenge suite.
 These pilot translations are model-generated validation/training material,
 not independent human gold. Luna can continue updating its separate output
 while these immutable snapshots train.
+
+## Further Stage A training
+
+`bilingual-stage-a-r16-round2.yaml` continues the fresh pilot for 100 steps on
+the unchanged snapshot, with learning rate 5e-5 and new sampling seed 43.
+Evaluate generated outputs on the same old holdouts before continuing again.
+This is adapter continuation with a fresh optimizer, not an exact Trainer resume.
+
+The next fidelity mix appends 512 original synthetic examples: 384 train and
+128 validation, plus 64 separate challenge examples. Number identifiers,
+self-corrections, absent units, list associations, paragraph commands and
+terminology are covered. Original pilot records and splits remain unchanged;
+these templates are diagnostics, not independent human gold.
+
+```bash
+uv run oceanscribe-cleanup prepare-fidelity-mix \
+  --dataset data/processed/bilingual-reviewed-pilot-v1/records.jsonl \
+  --output-dir data/processed/bilingual-fidelity-mix-v2
+
+uv run oceanscribe-cleanup train \
+  --config configs/runs/bilingual-stage-a-r16-round3.yaml \
+  --dataset data/processed/bilingual-fidelity-mix-v2/training/records.jsonl \
+  --output-dir runs/qwen35-08b-bilingual-stage-a-r16-round3
+```
+
+Round 3 starts from the original fresh pilot, using the mixed old/new dataset and
+seed 44. Round 2 improved WER but introduced a further number-identity failure
+on the original challenge set, so it was not selected as the next parent.
+Keep the old evaluation dataset fixed when comparing rounds. Newly translated
+CSV rows still require English-reference review and correct generator provenance
+before importing them; German translation completion alone is insufficient.
+
+## License
 
 The training code is Apache-2.0. Datasets, base models, trained weights, and
 other external artifacts retain their own licenses and must be registered in
