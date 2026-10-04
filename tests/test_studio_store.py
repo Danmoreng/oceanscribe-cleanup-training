@@ -118,6 +118,130 @@ def test_private_reference_has_no_teacher_target_and_never_enters_train_export(t
         assert "gold" not in (tmp_path / export["path"] / "records.jsonl").read_text()
 
 
+def test_explicit_expansion_persists_and_keeps_synthetic_dev_out_of_exports(tmp_path):
+    store = ReviewStore(tmp_path)
+    with pytest.raises(StudioError):
+        store.authorize_workload(unlimited_reviews=True, recording_limit=60)
+    store.authorize_workload(unlimited_reviews=True, recording_limit=60, confirm=True)
+    for index in range(105):
+        store.add_task(record(str(index)))
+        decide(store, store.next_card()["card"], request=f"accept-{index}")
+    dev = record(
+        "synthetic-dev",
+        split="validation",
+        synthetic=True,
+        source_name="original-model-generated-v3",
+        generator_version="fixture-v1",
+        seed=7,
+    )
+    store.add_task(dev, kind="synthetic_review", origin={"independent_human_gold": False})
+    decide(store, store.next_card("synthetic_review")["card"], request="accept-dev")
+    restarted = ReviewStore(tmp_path)
+    assert restarted.dashboard()["budgets"]["reviews"]["limit"] is None
+    assert restarted.dashboard()["budgets"]["recordings"]["limit"] == 60
+    exported = restarted.export_snapshot(FakeTokenizer())
+    assert "synthetic-dev" not in (tmp_path / exported["path"] / "records.jsonl").read_text()
+    with pytest.raises(StudioError):
+        store.add_task({**dev, "split": "test"}, kind="synthetic_review")
+    with pytest.raises(StudioError):
+        store.add_task(record("real-dev", split="validation"), kind="synthetic_review")
+
+
+def test_expanded_recording_list_exposes_more_than_twenty_tasks(tmp_path):
+    store = ReviewStore(tmp_path)
+    for index in range(44):
+        store.add_recording_task({**recording_task(), "task_id": f"clip-{index:02}"})
+    assert len(store.recording_tasks()) == 10
+    store.authorize_workload(unlimited_reviews=True, recording_limit=60, confirm=True)
+    assert len(store.recording_tasks()) == 44
+
+
+def test_free_tasks_are_hidden_and_cannot_start_but_history_is_preserved(tmp_path):
+    store = ReviewStore(tmp_path)
+    free = {**recording_task(), "task_id": "free-task", "split": "test", "mode": "free"}
+    free.pop("script")
+    store.add_recording_task(free)
+    store.add_recording_task(recording_task())
+    assert [task["task_id"] for task in store.recording_tasks()] == ["clip"]
+    with pytest.raises(StudioError, match="Freie Sprechaufgaben"):
+        store.start_recording("free-task", "start-free", consent_local=True)
+    assert store.dashboard()["budgets"]["recordings"]["used"] == 0
+    with store._transaction() as db:
+        assert db.execute("SELECT COUNT(*) FROM recording_tasks").fetchone()[0] == 2
+
+
+def test_luna_reading_keeps_family_split_hints_and_source_unapproved(tmp_path):
+    store = ReviewStore(tmp_path)
+    store.authorize_workload(unlimited_reviews=True, recording_limit=60, confirm=True)
+    source = record(
+        "luna-reading",
+        split="validation",
+        synthetic=True,
+        source_name="original-model-generated-v3",
+        generator_version="fixture",
+        seed=7,
+        terminology=["PostgreSQL"],
+    )
+    store.add_task(source, kind="synthetic_review", family_id="original-family")
+    card = store.next_card("synthetic_review")["card"]
+    result = store.recording_task_from_card(
+        card["task_id"], card["revision"], card["input_sha256"], output="Paket 07 bleibt gesperrt."
+    )
+    assert result == store.recording_task_from_card(
+        card["task_id"], card["revision"], card["input_sha256"], output="Paket 07 bleibt gesperrt."
+    )
+    task = result["task"]
+    assert task["family_id"] == "original-family" and task["split"] == "validation"
+    assert task["terminology"] == ["PostgreSQL"] and task["script"] == source["transcript"]
+    assert result["source_review_approved"] is False
+    assert store.dashboard()["pending_by_kind"]["synthetic_review"] == 1
+    assert store.dashboard()["budgets"]["recordings"]["used"] == 0
+    # Large available task lists do not reserve attempts or hide chosen Luna readings.
+    for index in range(65):
+        store.add_recording_task({**recording_task(), "task_id": f"extra-{index}"})
+    assert len(store.recording_tasks()) == 66
+    rid = store.start_recording(task["task_id"], "start", consent_local=True)["recording_id"]
+    store.save_audio(rid, b"RIFF0000WAVEfixture", "audio/wav", "upload", engine="parakeet")
+    store.complete_asr(rid, result={"engine": "parakeet", "transcript": "Paket 07 gesperrt."})
+    store.confirm_recording(rid, output="Paket 07 gesperrt.", request_id="confirm")
+    with store._transaction() as db:
+        child = db.execute("SELECT * FROM tasks WHERE id LIKE 'own-asr/%'").fetchone()
+        assert child["family"] == "original-family" and child["split"] == "validation"
+        payload = store._read(child["current_path"])
+        assert payload["record"]["transcript"] == "Paket 07 gesperrt."
+        assert payload["record"]["terminology"] == ["PostgreSQL"]
+        assert payload["origin"]["independent_human_gold"] is False
+    # Later source edits reopen the real ASR review; never reconstruct it from a script.
+    decide(store, card, action="edit", output="Paket 07 bleibt gesperrt", request="revise-source")
+    with store._transaction() as db:
+        child = db.execute("SELECT * FROM tasks WHERE id LIKE 'own-asr/%'").fetchone()
+        payload = store._read(child["current_path"])
+        assert child["status"] == "needs_human"
+        assert payload["origin"]["human_verified"] is False
+        assert payload["record"]["transcript"] == "Paket 07 gesperrt."
+        assert payload["record"]["output"] == "Paket 07 gesperrt."
+        assert payload["reference_frozen"] is False
+    with pytest.raises(ConflictError):
+        store.recording_task_from_card(card["task_id"], 999, card["input_sha256"])
+
+
+def test_new_comparison_round_keeps_old_blinded_answers_immutable(tmp_path):
+    store = ReviewStore(tmp_path)
+    reference = store.add_task(record("reference", split="validation"), kind="reference")
+    decide(store, store.next_card("reference")["card"], output="Paket 07 bleibt gesperrt.")
+    answers = [{"model_id": "a", "output": "A"}, {"model_id": "b", "output": "B"}]
+    first = store.add_comparison(reference, answers)
+    second_answers = [{"model_id": "a", "output": "A"}, {"model_id": "c", "output": "C"}]
+    second = store.add_comparison(reference, second_answers, comparison_run_id="round-2")
+    assert first != second
+    assert store.add_comparison(reference, answers) == first
+    with pytest.raises(ConflictError):
+        store.add_comparison(reference, second_answers)
+    with store._transaction() as db:
+        row = db.execute("SELECT * FROM tasks WHERE id=?", (first,)).fetchone()
+        assert {a["model_id"] for a in store._read(row["current_path"])["answers"]} == {"a", "b"}
+
+
 def test_parent_edit_regenerates_only_deterministic_children_not_other_language(tmp_path):
     store = ReviewStore(tmp_path)
     origin = {"provenance_checked": True}
@@ -238,14 +362,12 @@ def test_asr_lost_negation_can_be_excluded_without_inventing_raw(tmp_path):
         rid,
         result={"engine": "nemotron", "transcript": "freigeben", "provenance": {"unit_test": True}},
     )
-    with pytest.raises(StudioError, match="Negation"):
-        store.confirm_recording(rid, output="Nicht freigeben.", request_id="unsafe-repair")
     store.confirm_recording(rid, output=None, unrecoverable=True, request_id="exclude")
     assert store.recording_status(rid)["raw_transcript"] == "freigeben"
     assert store.export_snapshot(FakeTokenizer())["records"] == 0
 
 
-def test_asr_lost_number_is_not_restored_from_script(tmp_path):
+def test_human_can_mark_real_asr_loss_without_restoring_from_script(tmp_path):
     store = ReviewStore(tmp_path)
     store.add_recording_task(recording_task())
     rid = store.start_recording("clip", "start", consent_local=True)["recording_id"]
@@ -258,8 +380,6 @@ def test_asr_lost_number_is_not_restored_from_script(tmp_path):
             "provenance": {"unit_test": True},
         },
     )
-    with pytest.raises(StudioError, match="Zahl"):
-        store.confirm_recording(rid, output="Paket 007 prüfen.", request_id="invented-number")
     store.confirm_recording(rid, unrecoverable=True, request_id="exclude-number")
     assert store.recording_status(rid)["raw_transcript"] == "Paket prüfen."
 
@@ -322,3 +442,47 @@ def test_comparison_cannot_mutate_and_is_budgeted_after_reference(tmp_path):
     assert store.dashboard()["budgets"]["reviews"]["used"] == 2
     with pytest.raises(StudioError):
         decide(store, comparison, request="missing-assessment")
+
+
+@pytest.mark.parametrize(
+    "raw,target,expected_warning",
+    [
+        (
+            "Erstens die Liste prüfen, zweitens den Entwurf speichern.",
+            "1. Die Liste prüfen\n2. Den Entwurf speichern",
+            None,
+        ),
+        (
+            "First, check the list. Second, save the draft.",
+            "1. Check the list\n2. Save the draft",
+            None,
+        ),
+        ("Paket prüfen.", "Paket 007 prüfen.", "number-not-detected-in-raw"),
+        ("freigeben", "Nicht freigeben.", "negation-not-detected-in-raw"),
+    ],
+)
+def test_human_number_and_negation_decisions_are_not_blocked(
+    tmp_path, raw, target, expected_warning
+):
+    store = ReviewStore(tmp_path)
+    store.add_recording_task(recording_task())
+    rid = store.start_recording("clip", "start", consent_local=True)["recording_id"]
+    store.save_audio(rid, b"RIFF0000WAVEfixture", "audio/wav", "upload")
+    store.complete_asr(
+        rid, result={"engine": "nemotron", "transcript": raw, "provenance": {"unit_test": True}}
+    )
+    store.confirm_recording(rid, unrecoverable=True, request_id="mistaken-loss")
+    assert store.reopen_asr_loss(rid)["status"] == "needs_confirmation"
+    result = store.confirm_recording(rid, output=target, request_id="human-review")
+    assert result["status"] == "confirmed"
+    assert [w["code"] for w in result["warnings"]] == (
+        [expected_warning] if expected_warning else []
+    )
+    assert store.recording_status(rid)["raw_transcript"] == raw
+    exported = store.export_snapshot(FakeTokenizer())
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / exported["path"] / "records.jsonl").read_text().splitlines()
+    ]
+    assert rows[0]["output"] == target and rows[0]["transcript"] == raw
+    assert store.dashboard()["budgets"]["recordings"]["used"] == 1

@@ -28,6 +28,7 @@
     state.statusReady=Boolean(state.csrf&&state.sessionId);
     state.status = payload.status || payload;
     if (payload.asr) {
+      state.maxAudioSeconds=payload.asr.max_audio_seconds||300;
       const runner = payload.asr;
       const engines = runner.engines || {};
       const message = Object.values(engines).map((engine) => `${engine.actual_model || engine.engine || 'ASR'}: ${engine.available ? 'bereit' : (engine.error || 'nicht verfügbar')}`).join(' · ') || runner.target_mismatch || runner.error || 'Lokale ASR-Integration wird geprüft.';
@@ -38,6 +39,7 @@
       if (engines.nemotron || engines.parakeet) $('#asrEngine option[value="both"]').disabled = !engines.nemotron?.available && !engines.parakeet?.available;
     }
     if(state.statusReady){studioNotice('Lokal verbunden · Kampagnenstatus geladen.','ready');$('#refreshReview').disabled=false;if($('#refreshReview').textContent.includes('verbunden'))text($('#refreshReview'),state.paused?'Fünferblock fortsetzen':'Fünferblock beginnen / fortsetzen');}
+    if(!state.card&&state.status.pending_by_kind?.synthetic_review>0&&$('#queueKind').value==='repair'&&!state.status.pending_by_kind?.repair)$('#queueKind').value='synthetic_review';
     renderBudgets(); renderStats();
   }
   async function loadStatus(force=false){
@@ -50,12 +52,14 @@
   function budget(kind) { return state.status?.budgets?.[kind] || { used: 0, limit: kind === 'reviews' ? 50 : 10, maximum: kind === 'reviews' ? 100 : 20 }; }
   function renderBudgets() {
     const r = budget('reviews'), a = budget('recordings');
-    text($('#reviewBudget'), `${r.used} von ${r.limit} Reviews verbraucht`);
+    text($('#reviewBudget'), r.limit===null ? `${r.used} Reviews geöffnet · ohne Kartenlimit` : `${r.used} von ${r.limit} Reviews verbraucht`);
     text($('#recordBudget'), `${a.used} von ${a.limit} Versuchen verbraucht`);
-    text($('#cardRemaining'), `${Math.max(0, r.limit - r.used)} übrig`);
+    text($('#cardRemaining'), r.limit===null ? 'Alle verfügbaren Karten freigegeben' : `${Math.max(0, r.limit - r.used)} übrig`);
     text($('#recordRemaining'), `${Math.max(0, a.limit - a.used)} übrig`);
-    const queueLabels={repair:'Unklarheiten & Reparaturen',audit:'Zufällige Kontrollen',reference:'Development-Referenzen',comparison:'Modellvergleiche'};
-    for(const option of $('#queueKind').options){const item=r.by_kind?.[option.value];if(item)option.textContent=`${queueLabels[option.value]} · ${item.used}/${item.limit}`;}
+    const queueLabels={repair:'Unklarheiten & Reparaturen',audit:'Zufällige Kontrollen',reference:'Development-Referenzen',comparison:'Modellvergleiche',synthetic_review:'Luna-Szenarien (synthetisch)'};
+    for(const option of $('#queueKind').options){const item=r.by_kind?.[option.value];if(item)option.textContent=`${queueLabels[option.value]} · ${state.status.pending_by_kind?.[option.value]??0} offen · ${item.used} geöffnet`;}
+    $('#extendButton').hidden=r.limit===null;
+    text($('#budgetPolicy'),r.limit===null?'Textreviews sind auf deinen Auftrag ohne Kartenlimit freigegeben. Aufnahmeversuche bleiben begrenzt; Speichern startet kein Training.':'Startbudget 50 Reviews / 10 Aufnahmen; freiwillige Erweiterung auf 100/20.');
     const used = state.count % 5;
     text($('#sessionLabel'), state.paused ? 'Pausiert · du kannst später fortsetzen' : `Sitzung ${used || (state.count ? 5 : 0)} von 5`);
     $('#sessionTrack').style.width = `${used * 20}%`;
@@ -69,22 +73,22 @@
     ];
     $('#statsGrid').replaceChildren(...items.map(([label, value]) => { const card = document.createElement('div'); card.className = 'stat-card'; const number = document.createElement('strong'); number.textContent = value; const caption = document.createElement('span'); caption.textContent = label; card.append(number, caption); return card; }));
     const r = budget('reviews'), a = budget('recordings');
-    text($('#budgetDetail'), `Reviews: ${r.used}/${r.limit} verbraucht · ${Math.max(0, r.limit-r.used)} übrig\nAufnahmen: ${a.used}/${a.limit} verbraucht · ${Math.max(0, a.limit-a.used)} übrig`);
+    text($('#budgetDetail'), `Reviews: ${r.used} geöffnet · ${r.limit===null?'ohne Kartenlimit':Math.max(0, r.limit-r.used)+' übrig'}\nAufnahmen: ${a.used}/${a.limit} verbraucht · ${Math.max(0, a.limit-a.used)} übrig`);
     const blockers = state.status?.blockers || [];
     if (!blockers.length) {
       const openTasks = s.needs_human ?? s.pending_auto ?? 0;
       const activeASR = (recordings.asr_pending ?? 0) + (recordings.asr_failed ?? 0);
-      if (openTasks) blockers.push(`${openTasks} Textaufgaben brauchen noch eine begrenzte Prüfung.`);
+      if (openTasks) blockers.push(`${openTasks} Textaufgaben stehen zur Prüfung bereit.`);
       if (activeASR) blockers.push(`${activeASR} Aufnahme-ASR-Aufgaben sind offen oder fehlgeschlagen.`);
       if (s.quarantined) blockers.push(`${s.quarantined} Fälle bleiben ausgeschlossen.`);
     }
     $('#blockerList').replaceChildren(...(blockers.length ? blockers : ['Keine gemeldeten Sperren.']).map((item) => { const li = document.createElement('li'); li.textContent = typeof item === 'string' ? item : (item.message || JSON.stringify(item)); return li; }));
   }
-  function setView(view) {
+  function setView(view,loadRecordings=true) {
     for (const item of ['review','record','progress']) $(`#${item}View`).classList.toggle('hidden', item !== view);
     document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.view === view));
     if (view === 'progress') refresh();
-    if (view === 'record') loadRecordingTasks();
+    if (view === 'record'&&loadRecordings) loadRecordingTasks();
   }
   function diff(a, b) {
     const left = a.match(/\s+|[^\s]+/g) || [], right = b.match(/\s+|[^\s]+/g) || [];
@@ -97,6 +101,7 @@
   }
   function showCard(card) {
     state.card = card || null;
+    $('#recordFromCard').classList.toggle('hidden',card?.kind!=='synthetic_review');
     state.conflicted=false;
     $('#queueKind').disabled=!!card;
     $('#reviewEmpty').classList.toggle('hidden', !!card);
@@ -210,18 +215,25 @@
     text($('#recordHelp'),script?'2. Sprechtext natürlich einsprechen und stoppen. 3. Lokale Transkription abwarten, bereinigte Ziele prüfen und speichern. Fehlende Fakten nicht aus der Vorlage ergänzen.':'2. Eine kurze Nachricht oder Alltagssituation in eigenen Worten erzählen und stoppen. 3. Transkription abwarten, Ziele prüfen und speichern.');
     text($('#recordPromptLabel'),script?'SPRECHTEXT · DIESEN TEXT EINSPRECHEN':'FREIE SITUATION · IN EIGENEN WORTEN');
     text($('#recordPrompt'), script?script.replace(/^(?:Bitte lies|Dictate|Sprich)[^:]*:\s*/i,''):(task.prompt||'Erzähle frei von einer kurzen Aufgabe oder Nachricht.'));
+    text($('#recordTerminology'), task.terminology?.length ? `Cleanup-Begriffsliste: ${task.terminology.join(' · ')}. Hinweise gehen ausschließlich an Cleanup, nicht an ASR.` : 'Cleanup-Begriffsliste: leer.');
     text($('#recordTarget'), task.intended_output || task.target || '');
     $('#recordTarget').parentElement.open=false;
     $('#recordTarget').parentElement.classList.toggle('hidden',!task.intended_output&&!task.target);
-    $('#asrArea').classList.add('hidden');$('#retryASR').classList.add('hidden');$('#playback').classList.add('hidden');
+    $('#reopenRecord').classList.add('hidden');$('#asrArea').classList.add('hidden');$('#retryASR').classList.add('hidden');$('#playback').classList.add('hidden');
     state.recordingId=task.latest_recording_id||null;
     $('#recordStart').disabled = !task.task_id || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined';
     $('#recordStatus').textContent = $('#recordStart').disabled ? 'Aufnahme ist in diesem Browser nicht verfügbar.' : 'Aufgabe gewählt · Mikrofon wird erst beim Start aktiviert';
-    if(state.recordingId&&['needs_confirmation','asr_pending','asr_failed','recording'].includes(task.recording_status)){
+    if(state.recordingId&&['needs_confirmation','asr_pending','asr_failed','asr_unrecoverable','recording'].includes(task.recording_status)){
       localStorage.setItem('os_active_recording',JSON.stringify({recording_id:state.recordingId,task_id:task.task_id}));
       $('#recordStart').disabled=true;await pollRecording(true);
     }
   }
+  $('#recordFromCard').addEventListener('click',async()=>{
+    if(!state.card||state.recorder?.state==='recording'||state.uploading)return;
+    const button=$('#recordFromCard');button.disabled=true;saveDraft();
+    try{const result=await api('/api/recording/from-card',{task_id:state.card.task_id,expected_revision:state.card.revision,input_sha256:state.card.input_sha256,output:$('#outputText').value});const packet=await api('/api/recording-tasks');state.recordingTasks=packet.tasks||packet;renderRecordingTasks();setView('record',false);await selectRecordingTask(state.recordingTasks.find(task=>task.task_id===result.task.task_id)||result.task);text($('#recordStatus'),'Luna-Sprechvorlage bereit. Die Textkarte bleibt ungeprüft; tatsächliche ASR-Ziele anschließend prüfen.');}
+    catch(error){flash(error.message,true);}finally{button.disabled=false;}
+  });
   $('#recordTaskSelect').addEventListener('change',()=>{const task=state.recordingTasks.find(item=>item.task_id===$('#recordTaskSelect').value);if(task)selectRecordingTask(task);});
   async function enumerateMics() {
     const select=$('#micSelect');
@@ -242,7 +254,7 @@
       state.recordingFailed=false;state.recorder=new MediaRecorder(state.stream,{mimeType:mime}); state.chunks=[]; state.recorder.ondataavailable=(e)=>{if(e.data.size)state.chunks.push(e.data);}; state.recorder.onerror=(event)=>{state.recordingFailed=true;text($('#recordStatus'),event.error?.message||'Aufnahme fehlgeschlagen. Der Versuch bleibt gezählt; es erfolgt keine automatische Wiederholung.');stopRecording();}; state.recorder.onstop=finishRecording; state.recorder.start();
       state.startedAt=Date.now(); $('#recordStart').disabled=true; $('#recordStop').disabled=false; text($('#recordStatus'),'Aufnahme läuft · nur lokal');
       $('#recordTaskSelect').disabled=true;$('#asrEngine').disabled=true;
-      state.timer=setInterval(()=>{const seconds=Math.floor((Date.now()-state.startedAt)/1000); text($('#recordDuration'),`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`);},250);
+      state.timer=setInterval(()=>{const seconds=Math.floor((Date.now()-state.startedAt)/1000); text($('#recordDuration'),`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`);if(seconds>=state.maxAudioSeconds-2)stopRecording();},250);
     } catch(error) { state.stream?.getTracks().forEach(t=>t.stop()); state.stream=null; await stopLevelMeter(); text($('#recordStatus'),error.message); if(state.recordingId){$('#asrArea').classList.remove('hidden');$('#confirmRecord').disabled=true;pollRecording(true);} }
   }
   function startLevelMeter(){
@@ -282,6 +294,7 @@
       if(status.status==='asr_pending') { showSavedAudio();$('#asrArea').classList.remove('hidden');$('#recordStart').disabled=true;text($('#recordStatus'),'Lokale Transkription läuft …'); state.pollTimer=setTimeout(()=>{state.pollTimer=null;pollRecording(resumed);},1200); return; }
       if(status.status==='needs_confirmation' || status.variants?.length) { showSavedAudio();$('#asrArea').classList.remove('hidden');$('#recordStart').disabled=true;renderASRVariants(status); text($('#recordStatus'),'Rohtranskription bereit · Ziele getrennt prüfen'); return; }
       if(status.status==='recording'){ $('#asrArea').classList.remove('hidden');$('#confirmRecord').disabled=true;$('#recordStart').disabled=true;text($('#recordStatus'),resumed?'Vor dem Neuladen noch kein Audioclip gespeichert. Der Aufnahmeversuch zählt bereits; lösche diesen offenen Versuch, wenn du neu aufnehmen möchtest.':'Audio konnte nicht gespeichert werden. Der Aufnahmeversuch zählt bereits; erneuter Versuch ist manuell möglich.');return; }
+      if(status.status==='asr_unrecoverable'&&status.variants?.length){showSavedAudio();renderASRVariants(status);$('#asrArea').classList.remove('hidden');$('#reopenRecord').classList.remove('hidden');$('#confirmRecord').disabled=true;$('#retryASR').classList.add('hidden');text($('#recordStatus'),'Als ASR-Verlust markiert. Du kannst diese Entscheidung ohne neue Aufnahme erneut prüfen.');return;}
       if(['asr_failed','asr_unrecoverable'].includes(status.status)){ showSavedAudio();$('#asrArea').classList.remove('hidden');$('#confirmRecord').disabled=true;$('#recordStart').disabled=true;text($('#recordStatus'),`Transkription fehlgeschlagen: ${status.error||'Kein nutzbarer Rohtext'}. Das Audio bleibt gespeichert; die Transkription kann ohne neuen Aufnahmeversuch erneut starten.`);return; }
       text($('#recordStatus'),status.error || `Aufnahmestatus: ${status.status}`);
       if(['confirmed','deleted'].includes(status.status))localStorage.removeItem('os_active_recording');
@@ -312,8 +325,9 @@
     try{await api('/api/recording/retry',{recording_id:state.recordingId,request_id:id()});text($('#recordStatus'),'Gespeichertes Audio wird erneut transkribiert · kein neuer Aufnahmeversuch');await pollRecording();}
     catch(error){text($('#recordStatus'),error.message);}finally{$('#retryASR').disabled=false;}
   });
+  $('#reopenRecord').addEventListener('click',async()=>{try{await api('/api/recording/reopen',{recording_id:state.recordingId});$('#reopenRecord').classList.add('hidden');await pollRecording();}catch(error){text($('#recordStatus'),error.message);}});
   $('#confirmRecord').addEventListener('click',async()=>{
-    try { const outputs={}; for(const target of $('#asrTargets').querySelectorAll('textarea[data-engine]'))outputs[target.dataset.engine]=target.value; const unrecoverable_engines=[...$('#asrTargets').querySelectorAll('.asr-loss:checked')].map((input)=>input.dataset.engine); const result=await api('/api/recording/confirm',{recording_id:state.recordingId,outputs,unrecoverable_engines,request_id:id()}); clearRecordingDrafts(state.recordingId);localStorage.removeItem('os_active_recording'); text($('#recordStatus'),result.message||'Aufnahmeziele gespeichert'); $('#asrArea').classList.add('hidden'); $('#recordStart').disabled=false;await refresh();await loadRecordingTasks(true); }
+    try { const outputs={}; for(const target of $('#asrTargets').querySelectorAll('textarea[data-engine]'))outputs[target.dataset.engine]=target.value; const unrecoverable_engines=[...$('#asrTargets').querySelectorAll('.asr-loss:checked')].map((input)=>input.dataset.engine); const result=await api('/api/recording/confirm',{recording_id:state.recordingId,outputs,unrecoverable_engines,request_id:id()}); clearRecordingDrafts(state.recordingId);localStorage.removeItem('os_active_recording'); text($('#recordStatus'),result.message||'Aufnahmeziele gespeichert'); $('#asrArea').classList.add('hidden'); $('#recordStart').disabled=false;await refresh();await loadRecordingTasks(true); text($('#recordStatus'),result.warnings?.length ? `Gespeichert. ${result.warnings.length} automatische Inhalts-Hinweise wurden protokolliert; deine manuelle Entscheidung gilt.` : 'Aufnahmeziele gespeichert. Nächste Aufgabe ausgewählt.'); }
     catch(error){text($('#recordStatus'),error.message);}
   });
   $('#skipRecord').addEventListener('click',async()=>{try{await api('/api/recording/discard',{recording_id:state.recordingId,request_id:id()});localStorage.removeItem('os_active_recording');await refresh();await loadRecordingTasks(true);text($('#recordStatus'),'Vorherige Aufnahme verworfen. Audio bleibt lokal erhalten, der Versuch bleibt gezählt.');}catch(error){text($('#recordStatus'),error.message);}});

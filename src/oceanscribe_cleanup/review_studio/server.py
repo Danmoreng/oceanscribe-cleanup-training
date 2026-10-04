@@ -320,6 +320,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                     self._error("Local processing consent is required", 400, "consent_required")
                     return
                 result = self._call("start_recording", **data)
+            elif path == "/api/recording/from-card":
+                result = self._call("recording_task_from_card", **data)
             elif path == "/api/recording/upload":
                 encoded = data.pop("base64", None)
                 if not isinstance(encoded, str) or len(encoded) > (MAX_AUDIO * 4 // 3 + 8):
@@ -361,6 +363,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 )
             elif path == "/api/recording/discard":
                 result = self._call("discard_recording", data["recording_id"], data["request_id"])
+            elif path == "/api/recording/reopen":
+                result = self._call("reopen_asr_loss", data["recording_id"])
             elif path == "/api/recording/confirm":
                 result = self._call("confirm_recording", **data)
             elif path == "/api/recording/delete":

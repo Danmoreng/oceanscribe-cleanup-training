@@ -15,7 +15,17 @@ recording, the verified local OceanScribe ASR pipeline, and versioned data expor
 Use a small Python/static-frontend/SQLite implementation. No accounts, cloud ASR,
 public server, telemetry, CDNs or new plugin platform. Saving never starts
 training or publication. Start budgets are 50 review cards and 10 recording
-attempts; conscious extension is capped at 100/20. Dev/test content must remain
+attempts; conscious extension is capped at 100/20 by default. On 2026-10-04 the user explicitly
+authorized removing the text-review cap for the current campaign and providing
+all new Luna scenarios for manual review, plus more and longer technical
+recording tasks. The current campaign may use unlimited text reviews and 60
+recording attempts (including previously consumed attempts), with a five-minute
+maximum per clip. Persist this authorization; other campaigns retain defaults.
+The user also requested reading scripts only: hide/deactivate free speaking
+tasks, preserving previous recordings and split assignments. Do not replace
+protected independent test tasks with scripts or count scripted cases as gold.
+Synthetic validation scenarios remain protected and are never independent human
+gold, even after manual review. Dev/test content must remain
 outside teacher, train and calibration exports. Own recordings default to no
 external review permission. Never claim scripted or model-assisted data is
 independent human gold.

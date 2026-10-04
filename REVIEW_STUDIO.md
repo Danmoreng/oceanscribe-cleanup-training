@@ -37,12 +37,13 @@ Sicherung den Server stoppen.
    verblindete Antworten und verlangen jeweils eine eigene Bedeutungsbewertung.
 4. Unter **Diktieren** oben bei **Aufnahmeaufgabe auswählen** eine Aufgabe und
    Nemotron, Parakeet oder beide auswählen. Unter **Sprechtext** steht der Text,
-   der eingesprochen werden soll; bei freien Situationen in eigenen Worten sprechen.
+   der eingesprochen werden soll. Freie Situationen sind auf Nutzerwunsch deaktiviert.
    Mikrofon wählen, lokal aufnehmen, stoppen und anhören. Erst der tatsächliche
    ASR-Rohtext ist der Input; die Sprechvorlage ersetzt ihn nicht.
 5. Je ASR-Variante das Cleanup-Ziel bestätigen. Fehlende Fakten, die nur im Audio
    oder Skript stehen, als **ASR-Verlust** ausschließen. Die automatischen
-   Abwesenheitsprüfungen für Negationen/Zahlen ersetzen keine Bedeutungsprüfung.
+   Prüfungen für Negationen/Zahlen sind Hinweise und blockieren deine Entscheidung
+   nicht. Gesprochene Ordnungszahlen wie Erstens/Zweitens dürfen zur Liste werden.
 
 Ein Clip mit zwei ASR-Varianten zählt als ein Aufnahmeversuch. Neu einsprechen
 zählt erneut. Retakes und Varianten behalten die Szenariofamilie und den Split.
@@ -52,7 +53,8 @@ Browser-WebM ohne Dauer im Dateikopf wird anhand der tatsächlich dekodierten
 Samples gemessen. Überlange Clips werden abgewiesen, niemals still gekürzt.
 **Gespeichertes Audio erneut transkribieren** wiederholt einen technischen Fehler
 ohne neue Aufnahme und ohne zusätzlichen Versuch (höchstens drei Retries).
-**Diese Aufnahme verwerfen** schließt ungeeignete Aufnahmen aus, ohne Audio zu
+**ASR-Verlust erneut prüfen** nimmt eine falsche Verlustmarkierung zurück, ohne
+neue Aufnahme oder erneute ASR. **Diese Aufnahme verwerfen** schließt ungeeignete Aufnahmen aus, ohne Audio zu
 löschen oder das Budget zurückzusetzen. Die Auswahl zeigt den Zustand je Aufgabe.
 Textentwürfe werden im lokalen Browser gespeichert; endgültige Entscheidungen
 liegen versioniert im Studio. Technische Speicherwiederholungen behalten ihre
@@ -65,6 +67,62 @@ Nicht jede Reservierung muss ausgeschöpft werden. Die Aufnahmeplanung enthält 
 Zehnerblock 4 DE, 4 EN und 2 gemischte Aufgaben, verteilt auf 5 Train, 3 Development
 und 2 freie, verschlossene Testaufgaben. Die Erweiterungsaufgaben sind andere
 Szenarien. EN natürlich mit dem eigenen Akzent sprechen; Mischsprache erhalten.
+
+## Erweiterung vom 4. Oktober 2026
+
+Auf ausdrücklichen Nutzerauftrag hat die aktuelle Kampagne kein Textkartenlimit
+mehr. Unter **Luna-Szenarien (synthetisch)** erscheinen alle neuen Originalfälle,
+auch bisher zurückgestellte Kandidaten. Der Rohtext und der Zielvorschlag sind
+modellgeneriert: Eine menschliche Korrektur macht daraus keine unabhängig
+verfasste Goldreferenz. Train/Development-Zuordnung bleibt unverändert; synthetisches
+Development bleibt vom Training und von Teacher-Exporten getrennt.
+
+Bei einer Luna-Karte erstellt **Diesen Luna-Text als Diktat aufnehmen** eine
+Sprechaufgabe aus dem vollständigen Rohtext und übernimmt Begriffsliste, Modus
+und den Zielentwurf. Das bestätigt die Textkarte noch nicht. Nach dem Einsprechen
+ist ausschließlich das tatsächliche Parakeet-/Nemotron-Transkript der neue Input.
+Alle Audio- und Textableitungen behalten die Originalfamilie und ihren Split.
+Die Zahl verfügbarer Vorlagen ist unabhängig vom begrenzten Aufnahmebudget.
+Freie Sprechaufgaben werden nicht mehr angeboten oder neu gestartet; vorhandene
+Aufnahmen und ihre Geschichte bleiben erhalten. Scripted Development zählt
+weiterhin nicht als unabhängig formulierter menschlicher Test.
+
+Zusätzliche Fachtext-Diktate enthalten kurze, mittlere und längere Sprechvorlagen.
+Die **Cleanup-Begriffsliste** zeigt kanonische Schreibweisen, keine Aliase. Nur
+Cleanup bekommt diese Hinweise; Nemotron und Parakeet bekommen weder Vorlage
+noch Lösungstext oder Begriffsliste. Positive, bereits korrekte und irrelevante
+Hinweise sowie leere Listen prüfen Korrektur und unerwünschte Einfügung.
+Nach bestätigtem ASR-Rohtext können Auswertungen denselben Input mit passenden,
+leeren und irrelevanten Hinweisen vergleichen. Alle Varianten bleiben in einer
+Familie und im selben Split. Skripte sind keine Quelle für im ASR fehlende Fakten.
+
+Für bestätigte Development-Aufnahmen mit passenden Begriffen gibt es den lokalen
+Vergleich `tools/evaluate_recorded_terminology.py`. Er friert dieselben ASR-Rohtexte
+und Ziele für drei Promptbedingungen ein: passende, leere und irrelevante Hinweise.
+Er prüft Familien-/Texttrennung vom angegebenen Train-Snapshot und meldet WER/CER,
+kanonische Korrektur sowie falsche Einfügung. Ausgaben bleiben im geschützten
+Studio-Bereich; das ist eine Auswertung, kein Trainings- oder Teacher-Export.
+Ohne geeignete bestätigte Development-Aufnahmen lädt der Befehl kein Modell.
+
+```sh
+.venv/bin/python tools/evaluate_recorded_terminology.py \
+  --config data/prepared/expanded-continuation-20261004-r1/config-B.yaml \
+  --adapter runs/qwen35-08b-controlled-a-20261002/adapter-selected-technical \
+  --training-dataset data/prepared/expanded-continuation-20261004-r1/records.jsonl \
+  --output data/review-studio/current/protected/snapshots/terminology-ablation-20261004-r1
+```
+
+Bei künftigen Trainingssnapshots müssen vorgelesene Originalfälle und ihre echten
+ASR-Ableitungen als **eine** Familie behandelt werden. Der ASR-Pool darf die
+Originalfamilie nicht zusätzlich als unabhängige Synthetikfamilie zählen; für die
+kontrollierten Draw-Pläne werden die schriftlichen Geschwister solcher Familien
+nicht nochmals aus dem N-Pool gezogen. Validation bleibt geschützt.
+
+Die aktuelle Kampagne ist für **60 Aufnahmeversuche insgesamt** freigegeben,
+einschließlich früherer Versuche und Wiederholungen. Ein Clip darf höchstens
+**fünf Minuten** dauern. Der Browser stoppt am Limit; überlange hochgeladene
+Clips werden abgewiesen, nicht abgeschnitten. Fünferblöcke für Textreviews bleiben
+als freiwillige Pausen erhalten. Speichern startet weiterhin kein Training.
 
 ## Daten, Export und nächste Trainingsphase
 

@@ -17,7 +17,7 @@ from typing import Any
 
 PRODUCTION_ROOT = Path("/home/sebastian/Development/OceanScribe")
 DEFAULT_MAX_AUDIO_BYTES = 50 * 1024 * 1024
-DEFAULT_MAX_AUDIO_SECONDS = 120.0
+DEFAULT_MAX_AUDIO_SECONDS = 300.0
 
 
 class ASRUnavailable(RuntimeError):

@@ -15,6 +15,8 @@ def main():
     parser.add_argument("--data-root", type=Path, default=Path("data/review-studio/current"))
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--import-originals", type=Path)
+    parser.add_argument("--import-recording-packet", type=Path)
     parser.add_argument(
         "--no-bootstrap",
         action="store_true",
@@ -22,6 +24,13 @@ def main():
     )
     args = parser.parse_args()
     store = ReviewStore(args.data_root)
+    if args.import_originals or args.import_recording_packet:
+        from .imports import import_original_batches, import_recording_packet
+
+        if args.import_originals:
+            import_original_batches(store, args.import_originals)
+        if args.import_recording_packet:
+            import_recording_packet(store, args.import_recording_packet)
     if not args.no_bootstrap:
         from .bootstrap import initialize_studio
 

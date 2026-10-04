@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..records import CleanupRecord
 
-KINDS = {"repair": 20, "audit": 10, "reference": 10, "comparison": 10}
+KINDS = {"repair": 20, "audit": 10, "reference": 10, "comparison": 10, "synthetic_review": 0}
 ACCEPTED = {"auto_accepted", "human_accepted"}
 
 
@@ -78,6 +78,8 @@ class ReviewStore:
             """)
             db.execute("INSERT OR IGNORE INTO settings VALUES('extended','false')")
             db.execute("INSERT OR IGNORE INTO settings VALUES('recording_attempts','0')")
+            db.execute("INSERT OR IGNORE INTO settings VALUES('unlimited_reviews','false')")
+            db.execute("INSERT OR IGNORE INTO settings VALUES('recording_limit_override','0')")
 
     @contextmanager
     def _transaction(self):
@@ -126,17 +128,56 @@ class ReviewStore:
             db.execute("SELECT value FROM settings WHERE key='recording_attempts'").fetchone()[0]
         )
         factor = 2 if extended else 1
+        unlimited = json.loads(
+            db.execute("SELECT value FROM settings WHERE key='unlimited_reviews'").fetchone()[0]
+        )
+        recording_override = int(
+            db.execute(
+                "SELECT value FROM settings WHERE key='recording_limit_override'"
+            ).fetchone()[0]
+        )
         return {
             "reviews": {
                 "used": sum(used.values()),
-                "limit": 50 * factor,
-                "maximum": 100,
+                "limit": None if unlimited else 50 * factor,
+                "maximum": None if unlimited else 100,
                 "by_kind": {
-                    k: {"used": used.get(k, 0), "limit": n * factor} for k, n in KINDS.items()
+                    k: {"used": used.get(k, 0), "limit": None if unlimited else n * factor}
+                    for k, n in KINDS.items()
                 },
             },
-            "recordings": {"used": attempts, "limit": 10 * factor, "maximum": 20},
+            "recordings": {
+                "used": attempts,
+                "limit": max(10 * factor, recording_override),
+                "maximum": max(20, recording_override),
+            },
         }
+
+    def authorize_workload(self, *, unlimited_reviews=False, recording_limit=0, confirm=False):
+        """Apply an explicit user-authorized campaign policy; never inferred from imports."""
+        if confirm is not True:
+            raise StudioError("Die Änderung benötigt einen ausdrücklichen Nutzerauftrag.")
+        if not isinstance(unlimited_reviews, bool) or type(recording_limit) is not int:
+            raise StudioError("Ungültige Arbeitsumfang-Einstellungen.")
+        if recording_limit < 0:
+            raise StudioError("Aufnahmegrenze muss nichtnegativ sein.")
+        with self._transaction() as db:
+            db.execute(
+                "UPDATE settings SET value=? WHERE key='unlimited_reviews'",
+                (canonical(unlimited_reviews),),
+            )
+            db.execute(
+                "UPDATE settings SET value=? WHERE key='recording_limit_override'",
+                (str(recording_limit),),
+            )
+            self._event(
+                db,
+                None,
+                "explicit_workload_authorization",
+                unlimited_reviews=unlimited_reviews,
+                recording_limit=recording_limit,
+            )
+        return self.dashboard()
 
     def _cached(self, db, request_id, payload):
         if not isinstance(request_id, str) or not request_id or len(request_id) > 200:
@@ -172,6 +213,12 @@ class ReviewStore:
             raise StudioError("Dev/Test wird nicht in Reparatur- oder Agentenqueues aufgenommen.")
         if kind in {"reference", "comparison"} and record["split"] == "train":
             raise StudioError("Bewertungsanker darf kein Trainingsfall sein.")
+        if kind == "synthetic_review" and (
+            not record["synthetic"]
+            or record["split"] == "test"
+            or record["source_name"] != "original-model-generated-v3"
+        ):
+            raise StudioError("Luna-Queue erlaubt nur neue synthetische Train/Dev-Szenarien.")
         family = family_id or canonical(
             [record["source_name"], record["source_revision"], record["source_record_id"]]
         )
@@ -238,6 +285,12 @@ class ReviewStore:
             return {
                 "budgets": self._budgets(db),
                 "counts": counts,
+                "pending_by_kind": dict(
+                    Counter(
+                        row[0]
+                        for row in db.execute("SELECT kind FROM tasks WHERE status='needs_human'")
+                    )
+                ),
                 "families": families,
                 "recordings": recording_states,
                 "human_corrected_tasks": corrected,
@@ -312,7 +365,9 @@ class ReviewStore:
             if not row["started"]:
                 budgets = self._budgets(db)["reviews"]
                 category = budgets["by_kind"][kind]
-                if budgets["used"] >= budgets["limit"] or category["used"] >= category["limit"]:
+                if (budgets["limit"] is not None and budgets["used"] >= budgets["limit"]) or (
+                    category["limit"] is not None and category["used"] >= category["limit"]
+                ):
                     raise BudgetError()
                 db.execute("UPDATE tasks SET started=1 WHERE id=?", (row["id"],))
                 self._event(db, row["id"], "view", row["revision"], kind=kind)
@@ -466,7 +521,29 @@ class ReviewStore:
             content = self._read(child["current_path"])
             record = content["record"]
             if record.get("parent_id") != parent_record["id"]:
-                if content["origin"].get("reference_task_id") == row["id"]:
+                if content["origin"].get("source_review_task_id") == row["id"]:
+                    # A revised written label cannot automatically rewrite confirmed ASR targets.
+                    content["origin"]["human_verified"] = False
+                    content["origin"]["source_review_outdated"] = True
+                    content["reference_frozen"] = False
+                    content["meaning_status"] = "not_evaluated"
+                    path, file_hash = self._file(
+                        "train" if child["split"] == "train" else "protected", content
+                    )
+                    db.execute(
+                        "UPDATE tasks SET status='needs_human',revision=revision+1,current_path=? "
+                        "WHERE id=?",
+                        (path, child["id"]),
+                    )
+                    self._event(
+                        db,
+                        child["id"],
+                        "asr_source_review_changed",
+                        child["revision"] + 1,
+                        revision_sha256=file_hash,
+                        human_verified=False,
+                    )
+                elif content["origin"].get("reference_task_id") == row["id"]:
                     db.execute(
                         "UPDATE tasks SET status='quarantined',revision=revision+1 WHERE id=?",
                         (child["id"],),
@@ -503,9 +580,14 @@ class ReviewStore:
                 human_verified=False,
             )
 
-    def add_comparison(self, reference_task_id, answers):
+    def add_comparison(self, reference_task_id, answers, *, comparison_run_id=None):
         if len(answers) != 2 or any(set(a) != {"model_id", "output"} for a in answers):
             raise StudioError("Ein Vergleich enthält genau zwei Modellantworten.")
+        if comparison_run_id is not None and (
+            not isinstance(comparison_run_id, str)
+            or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", comparison_run_id)
+        ):
+            raise StudioError("Ungültige Vergleichsrunden-ID.")
         with self._transaction() as db:
             row = db.execute("SELECT * FROM tasks WHERE id=?", (reference_task_id,)).fetchone()
             if not row or row["kind"] != "reference" or row["status"] != "human_accepted":
@@ -519,7 +601,8 @@ class ReviewStore:
             record,
             kind="comparison",
             family_id=family,
-            task_id=f"comparison:{reference_task_id}:{frozen_hash}",
+            task_id=f"comparison:{reference_task_id}:{frozen_hash}"
+            + (f":{comparison_run_id}" if comparison_run_id else ""),
             question="Welche Antwort bewahrt die Bedeutung und bereinigt sinnvoll?",
             origin={"reference_sha256": frozen_hash, "reference_task_id": reference_task_id},
         )
@@ -561,6 +644,56 @@ class ReviewStore:
                 (payload["task_id"], canonical(pointer)),
             )
 
+    def recording_task_from_card(self, task_id, expected_revision, input_sha256, output=None):
+        """Make a reading task, keeping its original family/split and unapproved target."""
+        with self._transaction() as db:
+            row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if not row or row["kind"] != "synthetic_review":
+                raise StudioError("Nur neue synthetische Originalfälle werden hier vorgelesen.")
+            if row["revision"] != expected_revision or row["input_hash"] != input_sha256:
+                raise ConflictError()
+            if digest((self.root / row["input_path"]).read_bytes()) != input_sha256:
+                raise ConflictError("Unveränderliche Quelle wurde geändert.")
+            source = self._read(row["current_path"])
+            record = CleanupRecord.model_validate(
+                {
+                    **source["record"],
+                    "output": source["record"]["output"] if output is None else output,
+                }
+            )
+            if record.split == "test" or not record.synthetic:
+                raise StudioError("Geschützter menschlicher Test wird nicht zur Sprechvorlage.")
+            family = row["family"]
+            revision = row["revision"]
+        identifier = f"04-luna-{record.id}-r{revision}-{digest(record.output.encode())[:12]}"
+        payload = {
+            "task_id": identifier,
+            "family_id": family,
+            "split": record.split,
+            "language": record.language,
+            "commands": record.commands,
+            "terminology": list(record.terminology),
+            "mode": "scripted",
+            "script": record.transcript,
+            "intended_output": record.output,
+            "category": f"Luna vorlesen · {family}",
+            "prompt": "Sprechtext natürlich vorlesen. Das tatsächliche ASR-Ergebnis danach prüfen.",
+            "cohort": "04-luna-readings",
+            "extension_only": True,
+            "script_origin": "agent",
+            "script_generator_model_id": "gpt-6-luna",
+            "script_generator_reasoning_effort": "unknown",
+            "intended_output_origin": "unconfirmed_review_draft",
+            "speech_languages": [record.language],
+            "code_switching": False,
+            "source_review_task_id": task_id,
+            "source_review_revision": revision,
+            "source_input_sha256": input_sha256,
+            "independent_human_gold": False,
+        }
+        self.add_recording_task(payload)
+        return {"task": payload, "source_review_approved": False}
+
     def recording_tasks(self):
         with self._transaction() as db:
             rows = db.execute("SELECT * FROM recording_tasks ORDER BY id").fetchall()
@@ -568,6 +701,9 @@ class ReviewStore:
             tasks = []
             for row in rows:
                 task = self._read(json.loads(row["payload"])["path"])
+                # User requested reading scripts only; retain old free tasks/history privately.
+                if task.get("mode") == "free" or not task.get("script", "").strip():
+                    continue
                 attempts = db.execute(
                     "SELECT id,status FROM recordings WHERE task_id=? "
                     "ORDER BY created DESC,id DESC",
@@ -579,7 +715,9 @@ class ReviewStore:
                     attempt_count=len(attempts),
                 )
                 tasks.append(task)
-            return tasks[: 10 if budget["limit"] == 10 else 20]
+            # Task availability is independent of the attempt budget in the expanded campaign.
+            unlimited = self._budgets(db)["reviews"]["limit"] is None
+            return tasks if unlimited else tasks[: budget["limit"]]
 
     def start_recording(self, task_id, request_id, consent_local=False):
         if consent_local is not True:
@@ -595,6 +733,10 @@ class ReviewStore:
             if not row:
                 raise StudioError("Unbekannte Aufnahmeaufgabe.")
             task = self._read(json.loads(row["payload"])["path"])
+            if task.get("mode") == "free" or not task.get("script", "").strip():
+                raise StudioError(
+                    "Freie Sprechaufgaben sind deaktiviert. Bitte Vorlesetext wählen."
+                )
             if task.get("extension_only") and budget["limit"] == 10:
                 raise BudgetError()
             rid = uuid.uuid4().hex
@@ -902,8 +1044,33 @@ class ReviewStore:
             )
             self._event(db, recording_id, "recording_confirmed", status=status)
             return self._cache(
-                db, request_id, key, {"recording_id": recording_id, "status": status}
+                db,
+                request_id,
+                key,
+                {
+                    "recording_id": recording_id,
+                    "status": status,
+                    "warnings": payload.get("review_warnings", []),
+                },
             )
+
+    def reopen_asr_loss(self, recording_id):
+        """Undo a human loss classification without rerunning ASR or recording audio."""
+        with self._transaction() as db:
+            row = db.execute("SELECT * FROM recordings WHERE id=?", (recording_id,)).fetchone()
+            if not row or row["status"] != "asr_unrecoverable":
+                raise ConflictError("Nur eine als ASR-Verlust verworfene Aufnahme kann zurück.")
+            payload = json.loads(row["payload"])
+            if not payload.get("asr_path") or payload.get("record_ids"):
+                raise ConflictError("Keine vollständig verworfene ASR-Bestätigung vorhanden.")
+            asr = self._read(payload["asr_path"])
+            if not asr.get("variants"):
+                raise StudioError("Es gibt keinen gespeicherten ASR-Rohtext.")
+            db.execute(
+                "UPDATE recordings SET status='needs_confirmation' WHERE id=?", (recording_id,)
+            )
+            self._event(db, recording_id, "human_asr_loss_reopened")
+        return self.recording_status(recording_id)
 
     def _confirm_variant(self, db, row, payload, variant, output):
         recording_id = row["id"]
@@ -914,19 +1081,21 @@ class ReviewStore:
         scripted = bool(task.get("script"))
         raw = variant["transcript"].casefold()
         target = output.casefold()
+        warnings = []
         negation = (
             r"\b(?:nicht|kein\w*|nie|niemals|nein|ohne|not|no|never|without|cannot|can't|don't)\b"
         )
         if re.search(negation, target) and not re.search(negation, raw):
-            raise StudioError(
-                "Das Ziel ergänzt eine im ASR-Text fehlende Negation. Als ASR-Verlust markieren."
-            )
+            warnings.append("negation-not-detected-in-raw")
         # Conservative absence guard; spoken-number formatting remains allowed.
         # Other numeric changes still require the human text-solvability review.
         spoken_number = (
             r"\b(?:null|eins|ein|eine|einen|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|"
             r"elf|zwölf|dreizehn|vierzehn|fünfzehn|sechzehn|siebzehn|achtzehn|neunzehn|"
             r"zwanzig|dreißig|vierzig|fünfzig|sechzig|siebzig|achtzig|neunzig|hundert|tausend|"
+            r"erstens|zweitens|drittens|viertens|fünftens|sechstens|siebtens|achtens|neuntens|"
+            r"zehntens|elftens|zwölftens|first|second|third|fourth|fifth|sixth|seventh|eighth|"
+            r"ninth|tenth|eleventh|twelfth|firstly|secondly|thirdly|"
             r"zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
             r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
             r"sixty|seventy|eighty|ninety|hundred|thousand|\w*(?:zig|ßig|hundert|tausend))\b"
@@ -934,9 +1103,7 @@ class ReviewStore:
         if re.search(r"\d", target) and not (
             re.search(r"\d", raw) or re.search(spoken_number, raw)
         ):
-            raise StudioError(
-                "Das Ziel ergänzt eine im ASR-Text fehlende Zahl. Als ASR-Verlust markieren."
-            )
+            warnings.append("number-not-detected-in-raw")
         record = {
             "id": f"own-asr/{recording_id}/{engine}",
             "source_name": "own-local-asr",
@@ -967,6 +1134,8 @@ class ReviewStore:
             "recording_id": recording_id,
             "recording_task": row["task_id"],
             "asr_raw_immutable": True,
+            "automatic_review_warnings": warnings,
+            "independent_human_gold": False,
         }
         origin["source_kind"] = "human_audio_scripted" if scripted else "human_audio_spontaneous"
         origin.update(
@@ -979,6 +1148,9 @@ class ReviewStore:
             else None,
             reference_origin="model_assisted_human" if scripted else "human_text-confirmed",
             accent="natural German accent (user supplied)",
+            source_review_task_id=task.get("source_review_task_id"),
+            source_review_revision=task.get("source_review_revision"),
+            source_input_sha256=task.get("source_input_sha256"),
         )
         final = {
             "record": record,
@@ -1008,6 +1180,9 @@ class ReviewStore:
             ),
         )
         payload.setdefault("record_ids", []).append(record["id"])
+        payload.setdefault("review_warnings", []).extend(
+            {"engine": engine, "code": warning} for warning in warnings
+        )
 
     def audio_path(self, recording_id):
         with self._transaction() as db:

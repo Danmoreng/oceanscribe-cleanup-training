@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from oceanscribe_cleanup.review_studio.asr import (
+    DEFAULT_MAX_AUDIO_SECONDS,
     PRODUCTION_ROOT,
     AudioInputError,
     LocalASRRunner,
@@ -44,7 +45,9 @@ def test_transcribe_rejects_unsupported_locale_before_runtime_access(tmp_path: P
         runner.transcribe(audio, language="fr-FR")
 
 
-@pytest.mark.parametrize("seconds,oversize", [(0.5, False), (121.5, True)])
+@pytest.mark.parametrize(
+    "seconds,oversize", [(0.5, False), (DEFAULT_MAX_AUDIO_SECONDS + 1.5, True)]
+)
 def test_streaming_webm_without_duration_decodes_and_rejects_oversize(tmp_path, seconds, oversize):
     if not shutil.which("ffmpeg"):
         pytest.skip("Local ffmpeg required")

@@ -354,7 +354,14 @@ def test_server_requeues_durable_pending_asr_jobs(tmp_path, monkeypatch):
 def test_http_retry_and_discard_same_clip_preserve_attempt_budget(tmp_path, monkeypatch):
     store = ReviewStore(tmp_path)
     store.add_recording_task(
-        {"task_id": "clip", "family_id": "fixture/clip", "split": "train", "language": "de-DE"}
+        {
+            "task_id": "clip",
+            "family_id": "fixture/clip",
+            "split": "train",
+            "language": "de-DE",
+            "mode": "scripted",
+            "script": "Lokale technische Probe.",
+        }
     )
     rid = store.start_recording("clip", "start", consent_local=True)["recording_id"]
     store.save_audio(rid, b"RIFF0000WAVEfixture", "audio/wav", "upload")
